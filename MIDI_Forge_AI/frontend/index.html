@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MIDI Forge AI — Gerador e Treinador Local de MIDI</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300e5ff'><path d='M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z'/></svg>">
+</head>
+<body class="theme-dark">
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">MIDI FORGE AI</span>
+          <span class="brand-subtitle">MOTOR HÍBRIDO LOCAL</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-item active" data-view="dashboard">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
+          <span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-view="library">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+          <span>Biblioteca MIDI</span>
+        </button>
+        <button class="nav-item" data-view="data-prep">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+          <span>Preparação de Dados</span>
+        </button>
+        <button class="nav-item" data-view="training">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z"></path></svg>
+          <span>Treinamento</span>
+        </button>
+        <button class="nav-item" data-view="generation">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <span>Estúdio de Geração</span>
+        </button>
+        <button class="nav-item" data-view="history">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          <span>Histórico & Exportação</span>
+        </button>
+        <button class="nav-item" data-view="diagnostics">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+          <span>Diagnósticos (20 Testes)</span>
+        </button>
+        <button class="nav-item" data-view="portable">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+          <span>Pacote Windows Portátil</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="engine-badge">
+          <span class="pulse-indicator"></span>
+          <span id="hw-status-text">Motor Local: Ativo</span>
+        </div>
+        <div class="tech-tags">
+          <span class="badge">aiMIDI (REMI)</span>
+          <span class="badge">Theremin (BPE)</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 id="page-title">Painel de Controle</h1>
+          <p id="page-desc">Visão geral do motor neural local e estado do estúdio.</p>
+        </div>
+        <div class="topbar-right">
+          <div class="system-monitor">
+            <span class="chip" id="chip-device">Dispositivo: CPU</span>
+            <span class="chip" id="chip-storage">Espaço: Calculando...</span>
+          </div>
+          <button class="btn btn-primary" id="btn-quick-generate">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            Gerar Agora
+          </button>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <!-- 1. DASHBOARD VIEW -->
+        <section class="view active" id="view-dashboard">
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <span class="metric-label">Arquivos MIDI Carregados</span>
+              <div class="metric-value" id="dash-midi-count">0</div>
+              <span class="metric-hint">Coleção local pronta</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Notas / Eventos Analisados</span>
+              <div class="metric-value" id="dash-notes-count">0</div>
+              <span class="metric-hint">Extraídos de arquivos SMF</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Modelos & Checkpoints</span>
+              <div class="metric-value" id="dash-ckpts-count">0</div>
+              <span class="metric-hint">Pesos salvos em disco</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Músicas Geradas (Output)</span>
+              <div class="metric-value" id="dash-output-count">0</div>
+              <span class="metric-hint">Exportadas e validadas</span>
+            </div>
+          </div>
+
+          <div class="dashboard-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Ações Rápidas de Produção</h3>
+              </div>
+              <div class="panel-body quick-actions-grid">
+                <button class="action-card" id="dash-action-import">
+                  <div class="action-icon">📂</div>
+                  <h4>Carregar MIDIs</h4>
+                  <p>Adicione arquivos .mid ou gere o dataset de teste sintético.</p>
+                </button>
+                <button class="action-card" id="dash-action-train">
+                  <div class="action-icon">⚡</div>
+                  <h4>Treinar Modelo</h4>
+                  <p>Inicie o loop autorregressivo GPT com tokenização REMI ou BPE.</p>
+                </button>
+                <button class="action-card" id="dash-action-generate">
+                  <div class="action-icon">🎹</div>
+                  <h4>Compor Nova Música</h4>
+                  <p>Gere variações ou continue um MIDI de referência.</p>
+                </button>
+                <button class="action-card" id="dash-action-diagnostics">
+                  <div class="action-icon">🛡️</div>
+                  <h4>Verificar Integridade</h4>
+                  <p>Execute os 20 testes unitários automatizados da aplicação.</p>
+                </button>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Arquitetura do Motor Híbrido</h3>
+              </div>
+              <div class="panel-body">
+                <div class="engine-features-list">
+                  <div class="feature-item">
+                    <span class="feat-badge remi">aiMIDI</span>
+                    <div>
+                      <strong>Tokenização Musical REMI</strong>
+                      <p>Quantização temporal estrita por barras e compassos com 16 subdivisões, velocidades em bins e durações proporcionais.</p>
+                    </div>
+                  </div>
+                  <div class="feature-item">
+                    <span class="feat-badge theremin">Theremin MIDI</span>
+                    <div>
+                      <strong>Codificação Serializada & BPE</strong>
+                      <p>Stream de texto musical com aprendizado de sub-tokens frequentes por Byte Pair Encoding e condicionamento por referência.</p>
+                    </div>
+                  </div>
+                  <div class="feature-item">
+                    <span class="feat-badge hybrid">Núcleo Compartilhado</span>
+                    <div>
+                      <strong>Transformer GPT Autorregressivo</strong>
+                      <p>Atenção causal multi-cabeça Pre-LN, checkpoints automáticos, parada segura e decodificação rigorosa compatível com FL Studio.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. MIDI LIBRARY VIEW -->
+        <section class="view" id="view-library">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>Biblioteca Local de Arquivos MIDI</h3>
+                <p class="subtitle">Arquivos disponíveis na pasta local do projeto para treinamento e condicionamento.</p>
+              </div>
+              <div class="panel-actions">
+                <button class="btn btn-secondary" id="btn-generate-synthetic">
+                  ✨ Gerar Coleção Sintética (8 MIDIs)
+                </button>
+                <label class="btn btn-primary file-upload-btn">
+                  <span>📥 Importar Arquivos .MID</span>
+                  <input type="file" id="midi-file-input" multiple accept=".mid,.midi">
+                </label>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="table-responsive">
+                <table class="data-table" id="table-library">
+                  <thead>
+                    <tr>
+                      <th>Arquivo</th>
+                      <th>Duração</th>
+                      <th>Andamento</th>
+                      <th>Pistas</th>
+                      <th>Notas</th>
+                      <th>Faixa Pitch</th>
+                      <th>Integridade</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbody-library">
+                    <tr><td colspan="8" class="text-center">Carregando biblioteca...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Interactive Piano Roll & Player Preview -->
+              <div class="preview-box" id="library-preview-box">
+                <div class="preview-box-header">
+                  <h4 id="preview-title">Visualizador Piano Roll & Player de Áudio</h4>
+                  <div class="player-controls">
+                    <button class="btn btn-sm btn-secondary" id="btn-play-preview">▶ Tocar no Navegador</button>
+                    <button class="btn btn-sm btn-secondary" id="btn-stop-preview">⏹ Parar</button>
+                  </div>
+                </div>
+                <canvas id="piano-roll-canvas" width="900" height="180"></canvas>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. DATA PREPARATION VIEW -->
+        <section class="view" id="view-data-prep">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>Pré-processamento & Tokenização</h3>
+                <p class="subtitle">Configure o adaptador musical que transformará os arquivos MIDI em sequências de aprendizado.</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="prep-mode">Modo de Tokenização</label>
+                  <select id="prep-mode" class="form-control">
+                    <option value="remi" selected>REMI (aiMIDI) — Compassos, Posições Métricas e Bins</option>
+                    <option value="theremin">Theremin BPE — Serialização Textual & Fusões de Pares</option>
+                  </select>
+                  <span class="field-hint">REMI é superior para harmonia rítmica; Theremin BPE é excelente para linhas melódicas contínuas.</span>
+                </div>
+
+                <div class="form-group">
+                  <label for="prep-block-size">Comprimento da Janela (Tokens Contexto)</label>
+                  <select id="prep-block-size" class="form-control">
+                    <option value="64">64 tokens (Ultraleve / Testes)</option>
+                    <option value="128" selected>128 tokens (Recomendado para CPU)</option>
+                    <option value="256">256 tokens (Equilibrado)</option>
+                    <option value="512">512 tokens (Contexto Longo)</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="prep-augment">Aumento de Dados (Augmentation)</label>
+                  <select id="prep-augment" class="form-control">
+                    <option value="true" selected>Ativado (Transposição de -2 a +2 semitons)</option>
+                    <option value="false">Desativado (Apenas tons originais)</option>
+                  </select>
+                  <span class="field-hint">Multiplica o tamanho do dataset transpondo composições em diferentes tonalidades.</span>
+                </div>
+              </div>
+
+              <div class="form-actions mt-4">
+                <button class="btn btn-primary" id="btn-run-prep">⚡ Processar & Gerar Sequências de Treinamento</button>
+              </div>
+
+              <div class="report-box mt-4" id="prep-report-box" style="display:none;">
+                <h4>Relatório de Pré-processamento</h4>
+                <div class="report-stats" id="prep-report-content"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. TRAINING VIEW -->
+        <section class="view" id="view-training">
+          <div class="training-layout">
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Configuração do Modelo & Hiperparâmetros</h3>
+              </div>
+              <div class="panel-body">
+                <div class="form-group">
+                  <label>Preset de Desempenho</label>
+                  <div class="preset-buttons">
+                    <button class="btn btn-sm btn-outline active" data-preset="cpu">Conservador (CPU Fraco)</button>
+                    <button class="btn btn-sm btn-outline" data-preset="balanced">Equilibrado</button>
+                    <button class="btn btn-sm btn-outline" data-preset="deep">Deep Music (Mais Camadas)</button>
+                  </div>
+                </div>
+
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label for="train-model-name">Nome do Modelo</label>
+                    <input type="text" id="train-model-name" class="form-control" value="Forge_Transformer_v1">
+                  </div>
+                  <div class="form-group">
+                    <label for="train-epochs">Número de Épocas</label>
+                    <input type="number" id="train-epochs" class="form-control" value="12" min="1" max="200">
+                  </div>
+                  <div class="form-group">
+                    <label for="train-batch">Tamanho do Lote (Batch Size)</label>
+                    <input type="number" id="train-batch" class="form-control" value="4" min="1" max="64">
+                  </div>
+                  <div class="form-group">
+                    <label for="train-lr">Taxa de Aprendizado (Learning Rate)</label>
+                    <input type="number" id="train-lr" class="form-control" value="0.0005" step="0.0001">
+                  </div>
+                  <div class="form-group">
+                    <label for="train-layers">Camadas Transformer (Layers)</label>
+                    <input type="number" id="train-layers" class="form-control" value="3" min="1" max="12">
+                  </div>
+                  <div class="form-group">
+                    <label for="train-heads">Cabeças de Atenção (Heads)</label>
+                    <input type="number" id="train-heads" class="form-control" value="4" min="1" max="16">
+                  </div>
+                  <div class="form-group">
+                    <label for="train-embd">Dimensão do Embedding</label>
+                    <input type="number" id="train-embd" class="form-control" value="128" min="32" max="512">
+                  </div>
+                </div>
+
+                <div class="training-controls mt-4">
+                  <button class="btn btn-primary" id="btn-train-start">▶ Iniciar Treinamento</button>
+                  <button class="btn btn-secondary" id="btn-train-pause" disabled>⏸ Pausar</button>
+                  <button class="btn btn-secondary" id="btn-train-resume" disabled>⏯ Retomar</button>
+                  <button class="btn btn-danger" id="btn-train-stop" disabled>⏹ Interromper</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Monitor de Treinamento em Tempo Real</h3>
+                <span class="status-pill status-idle" id="train-status-badge">Parado</span>
+              </div>
+              <div class="panel-body">
+                <div class="train-meters-grid">
+                  <div class="meter-box">
+                    <span class="meter-title">Época</span>
+                    <span class="meter-val" id="meter-epoch">0 / 0</span>
+                  </div>
+                  <div class="meter-box">
+                    <span class="meter-title">Passo (Step)</span>
+                    <span class="meter-val" id="meter-step">0 / 0</span>
+                  </div>
+                  <div class="meter-box">
+                    <span class="meter-title">Loss Treino</span>
+                    <span class="meter-val text-cyan" id="meter-loss">0.000</span>
+                  </div>
+                  <div class="meter-box">
+                    <span class="meter-title">Loss Validação</span>
+                    <span class="meter-val text-amber" id="meter-val-loss">0.000</span>
+                  </div>
+                  <div class="meter-box">
+                    <span class="meter-title">Tempo Decorrido</span>
+                    <span class="meter-val" id="meter-elapsed">00:00</span>
+                  </div>
+                  <div class="meter-box">
+                    <span class="meter-title">Tempo Restante (ETA)</span>
+                    <span class="meter-val" id="meter-eta">--:--</span>
+                  </div>
+                </div>
+
+                <div class="progress-bar-container mt-4">
+                  <div class="progress-info">
+                    <span>Progresso Geral</span>
+                    <span id="train-pct">0%</span>
+                  </div>
+                  <div class="progress-track">
+                    <div class="progress-fill" id="train-progress-fill" style="width: 0%;"></div>
+                  </div>
+                </div>
+
+                <!-- Live Loss Canvas Chart -->
+                <div class="chart-container mt-4">
+                  <canvas id="loss-chart-canvas" width="600" height="200"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. GENERATION STUDIO VIEW -->
+        <section class="view" id="view-generation">
+          <div class="generation-layout">
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Controles de Composição Musical</h3>
+              </div>
+              <div class="panel-body">
+                <div class="form-group">
+                  <label for="gen-mode">Tipo de Geração</label>
+                  <select id="gen-mode" class="form-control">
+                    <option value="unconditional">Incondicional (Composição 100% Livre / Semente)</option>
+                    <option value="reference">Condicionada por MIDI de Referência (Continuação)</option>
+                  </select>
+                </div>
+
+                <div class="form-group" id="group-ref-midi" style="display:none;">
+                  <label for="gen-ref-file">MIDI de Referência</label>
+                  <select id="gen-ref-file" class="form-control">
+                    <option value="">Carregando arquivos...</option>
+                  </select>
+                  <span class="field-hint">O modelo utilizará o motivo deste MIDI como prompt prefix e comporá a continuação.</span>
+                </div>
+
+                <div class="form-group" id="group-retention" style="display:none;">
+                  <label for="gen-retention">Percentual de Contexto Preservado (<span id="retention-val">30</span>%)</label>
+                  <input type="range" id="gen-retention" class="form-range" min="10" max="80" value="30">
+                </div>
+
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label for="gen-temp">Temperatura (<span id="temp-val">0.95</span>)</label>
+                    <input type="range" id="gen-temp" class="form-range" min="0.2" max="1.5" step="0.05" value="0.95">
+                    <span class="field-hint">Valores baixos = previsível; altos = criativo/arrojado.</span>
+                  </div>
+                  <div class="form-group">
+                    <label for="gen-tokens">Comprimento Máximo (Tokens)</label>
+                    <input type="number" id="gen-tokens" class="form-control" value="220" min="40" max="600">
+                  </div>
+                  <div class="form-group">
+                    <label for="gen-topk">Top-K (<span id="topk-val">40</span>)</label>
+                    <input type="range" id="gen-topk" class="form-range" min="5" max="100" value="40">
+                  </div>
+                  <div class="form-group">
+                    <label for="gen-topp">Top-P / Nucleus (<span id="topp-val">0.90</span>)</label>
+                    <input type="range" id="gen-topp" class="form-range" min="0.5" max="0.99" step="0.01" value="0.90">
+                  </div>
+                  <div class="form-group">
+                    <label for="gen-bpm">Andamento (BPM)</label>
+                    <input type="number" id="gen-bpm" class="form-control" value="120" min="40" max="240">
+                  </div>
+                  <div class="form-group">
+                    <label for="gen-seed">Semente Aleatória (Vazio = Automático)</label>
+                    <input type="number" id="gen-seed" class="form-control" placeholder="Aleatória">
+                  </div>
+                </div>
+
+                <div class="mt-4">
+                  <button class="btn btn-primary w-100" id="btn-generate-music">
+                    ⚡ Gerar Composição Musical
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h3>Resultado & Partitura Visual (Piano Roll)</h3>
+                <div class="panel-actions" id="gen-result-actions" style="display:none;">
+                  <button class="btn btn-sm btn-secondary" id="btn-play-gen">▶ Audicionar</button>
+                  <button class="btn btn-sm btn-secondary" id="btn-stop-gen">⏹ Parar</button>
+                  <a class="btn btn-sm btn-primary" id="btn-download-gen" href="#">💾 Baixar .MID (FL Studio)</a>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div id="gen-placeholder" class="placeholder-box">
+                  <p>Configure os parâmetros ao lado e clique em <strong>Gerar Composição Musical</strong>.</p>
+                </div>
+                <div id="gen-result-container" style="display:none;">
+                  <div class="gen-metrics-banner mb-3" id="gen-metrics-banner"></div>
+                  <canvas id="gen-piano-roll-canvas" width="650" height="240"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 6. HISTORY & EXPORT VIEW -->
+        <section class="view" id="view-history">
+          <div class="panel">
+            <div class="panel-header">
+              <h3>Histórico de Gerações & Exportações</h3>
+              <p class="subtitle">Arquivos MIDI gerados salvos localmente na pasta <code>output/</code>.</p>
+            </div>
+            <div class="panel-body">
+              <div class="table-responsive">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Arquivo</th>
+                      <th>Duração</th>
+                      <th>Notas</th>
+                      <th>BPM</th>
+                      <th>Validação SMF</th>
+                      <th>Download</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbody-history">
+                    <tr><td colspan="6" class="text-center">Carregando histórico...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 7. DIAGNOSTICS VIEW (20 AUTOMATED TESTS) -->
+        <section class="view" id="view-diagnostics">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>Diagnósticos do Sistema & Bateria de 20 Testes</h3>
+                <p class="subtitle">Verificação completa e automatizada de todos os 20 requisitos técnicos obrigatórios.</p>
+              </div>
+              <button class="btn btn-primary" id="btn-run-all-tests">
+                🛡️ Executar 20 Testes Agora
+              </button>
+            </div>
+            <div class="panel-body">
+              <div class="diag-summary-card mb-4" id="diag-summary" style="display:none;"></div>
+              <div class="tests-list" id="tests-list-container">
+                <p class="text-muted">Clique em "Executar 20 Testes Agora" para rodar a suíte de validação.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 8. WINDOWS PORTABLE DISTRIBUTION VIEW -->
+        <section class="view" id="view-portable">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>Distribuição Portátil para Windows</h3>
+                <p class="subtitle">Estrutura física autossuficiente pronta para rodar sem instalador no Windows 10/11.</p>
+              </div>
+            </div>
+            <div class="panel-body portable-docs">
+              <div class="info-callout">
+                <h4>Como executar no seu computador com Windows:</h4>
+                <ol>
+                  <li>O projeto inclui a pasta completa <code>MIDI_Forge_AI</code>.</li>
+                  <li>Na primeira execução, dê um duplo-clique em <code>Setup_First_Run.bat</code>.</li>
+                  <li>Para iniciar o programa no dia a dia, dê um duplo-clique em <code>Start.bat</code>.</li>
+                  <li>O navegador abrirá automaticamente em <code>http://127.0.0.1:8080</code>.</li>
+                </ol>
+              </div>
+
+              <h4 class="mt-4">Estrutura de Arquivos Criada no Pacote:</h4>
+              <pre class="file-tree-view">
+MIDI_Forge_AI/
+├── Start.bat                   (Script de inicializacao com deteccao e protecao)
+├── Setup_First_Run.bat         (Preparador de ambiente virtual e dependencias)
+├── README.txt                  (Manual completo em texto puro)
+├── THIRD_PARTY_NOTICES.md      (Atribuicoes aos projetos aiMIDI e Theremin MIDI)
+├── requirements.txt            (Versoes fixadas: torch, mido, numpy)
+├── LICENSES/                   (Licencas MIT e BSD de terceiros)
+├── app/
+│   ├── server.py               (Servidor HTTP nativo sem dependencias externas)
+│   ├── midi/                   (Parser SMF, Writer compativel com FL Studio)
+│   ├── engine/                 (Tokenizador REMI, Theremin BPE e Adaptador Hibrido)
+│   ├── training/               (Transformer GPT, Dataset Builder e Loop com Checkpoints)
+│   ├── generation/             (Amostragem com Temperatura/Top-K/Top-P e Gerador)
+│   └── storage/                (Gerenciador de projetos e persistencia de estado)
+├── frontend/                   (Interface nativa em HTML, CSS e JavaScript)
+├── tests/                      (Suite automatizada com os 20 testes obrigatorios)
+├── datasets/                   (Sua colecao de arquivos MIDI e sinteticos)
+├── checkpoints/                (Pesos salvos automaticamente a cada epoca)
+└── output/                     (Arquivos .mid gerados prontos para DAWs)
+              </pre>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

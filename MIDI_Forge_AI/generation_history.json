@@ -1,0 +1,77 @@
+[
+  {
+    "success": true,
+    "filename": "forge_gen_20261010_142545_s42.mid",
+    "filepath": "/app/applet/MIDI_Forge_AI/output/forge_gen_20261010_142545_s42.mid",
+    "seed": 42,
+    "temperature": 0.9,
+    "top_k": 40,
+    "top_p": 0.9,
+    "bpm": 120.0,
+    "duration_sec": 8.12,
+    "note_count": 5,
+    "token_count": 51,
+    "prompt_token_count": 1,
+    "pitch_range": [
+      49,
+      84
+    ],
+    "validation_report": {
+      "is_valid": true,
+      "notes_verified": 5,
+      "error": null
+    },
+    "preview_notes": [
+      {
+        "pitch": 49,
+        "start_tick": 0,
+        "end_tick": 240,
+        "duration_ticks": 240,
+        "velocity": 2,
+        "channel": 0,
+        "program": 0,
+        "track": 0
+      },
+      {
+        "pitch": 69,
+        "start_tick": 0,
+        "end_tick": 7560,
+        "duration_ticks": 7560,
+        "velocity": 54,
+        "channel": 0,
+        "program": 0,
+        "track": 0
+      },
+      {
+        "pitch": 75,
+        "start_tick": 600,
+        "end_tick": 3720,
+        "duration_ticks": 3120,
+        "velocity": 54,
+        "channel": 0,
+        "program": 0,
+        "track": 0
+      },
+      {
+        "pitch": 84,
+        "start_tick": 600,
+        "end_tick": 1560,
+        "duration_ticks": 960,
+        "velocity": 42,
+        "channel": 0,
+        "program": 0,
+        "track": 0
+      },
+      {
+        "pitch": 61,
+        "start_tick": 600,
+        "end_tick": 3360,
+        "duration_ticks": 2760,
+        "velocity": 114,
+        "channel": 0,
+        "program": 0,
+        "track": 0
+      }
+    ]
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "name": "MIDI Forge AI",
+  "description": "Estúdio e motor híbrido local de treinamento e geração MIDI baseado em aiMIDI (REMI) e Theremin MIDI (BPE/GPT).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
