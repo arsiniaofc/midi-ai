@@ -1,6 +1,96 @@
 [
   {
     "success": true,
+    "filename": "forge_gen_20261010_151522_s322171.mid",
+    "filepath": "/app/applet/MIDI_Forge_AI/output/forge_gen_20261010_151522_s322171.mid",
+    "seed": 322171,
+    "temperature": 1.0,
+    "top_k": 40,
+    "top_p": 0.9,
+    "bpm": 120.0,
+    "duration_sec": 2.0,
+    "note_count": 2,
+    "token_count": 201,
+    "prompt_token_count": 1,
+    "pitch_range": [
+      97,
+      105
+    ],
+    "validation_report": {
+      "is_valid": true,
+      "notes_verified": 2,
+      "error": null
+    },
+    "preview_notes": [
+      {
+        "pitch": 97,
+        "start_tick": 1440,
+        "end_tick": 1920,
+        "duration_ticks": 480,
+        "velocity": 94,
+        "channel": 0,
+        "program": 0,
+        "track": 0
+      },
+      {
+        "pitch": 105,
+        "start_tick": 1560,
+        "end_tick": 1800,
+        "duration_ticks": 240,
+        "velocity": 126,
+        "channel": 0,
+        "program": 0,
+        "track": 0
+      }
+    ]
+  },
+  {
+    "success": false,
+    "filename": "forge_gen_20261010_151430_s270319.mid",
+    "filepath": "/app/applet/MIDI_Forge_AI/output/forge_gen_20261010_151430_s270319.mid",
+    "seed": 270319,
+    "temperature": 1.0,
+    "top_k": 40,
+    "top_p": 0.9,
+    "bpm": 120.0,
+    "duration_sec": 0.0,
+    "note_count": 2,
+    "token_count": 201,
+    "prompt_token_count": 1,
+    "pitch_range": [
+      0,
+      0
+    ],
+    "validation_report": {
+      "is_valid": false,
+      "notes_verified": 0,
+      "error": "Erro ao analisar arquivo MIDI: 'NoneType' object has no attribute 'MidiFile'"
+    },
+    "preview_notes": [
+      {
+        "pitch": 100,
+        "start_tick": 1560,
+        "end_tick": 2280,
+        "duration_ticks": 720,
+        "velocity": 102,
+        "channel": 0,
+        "program": 0,
+        "track": 0
+      },
+      {
+        "pitch": 108,
+        "start_tick": 1800,
+        "end_tick": 2040,
+        "duration_ticks": 240,
+        "velocity": 122,
+        "channel": 0,
+        "program": 0,
+        "track": 0
+      }
+    ]
+  },
+  {
+    "success": true,
     "filename": "forge_gen_20261010_142545_s42.mid",
     "filepath": "/app/applet/MIDI_Forge_AI/output/forge_gen_20261010_142545_s42.mid",
     "seed": 42,

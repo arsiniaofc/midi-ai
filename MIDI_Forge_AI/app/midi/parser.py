@@ -122,10 +122,22 @@ class MidiParser:
                 )
                 return info, []
 
-        try:
-            return self._parse_with_mido(filepath)
-        except Exception as e:
-            # Fallback or report error
+        if mido is not None:
+            try:
+                return self._parse_with_mido(filepath)
+            except Exception:
+                pass
+        return self._parse_binary_fallback(filepath)
+
+    def _parse_binary_fallback(self, filepath: str) -> Tuple[MidiFileInfo, List[NoteEvent]]:
+        """Pure-Python binary SMF parser without third-party dependencies."""
+        import struct
+
+        with open(filepath, "rb") as f:
+            raw = f.read()
+
+        file_size = len(raw)
+        if len(raw) < 14 or raw[:4] != b"MThd":
             info = MidiFileInfo(
                 filename=os.path.basename(filepath),
                 filepath=filepath,
@@ -138,9 +150,143 @@ class MidiParser:
                 note_count=0,
                 pitch_range=(0, 0),
                 is_valid=False,
-                error_message=f"Erro ao analisar arquivo MIDI: {str(e)}",
+                error_message="Cabeçalho SMF inválido",
             )
             return info, []
+
+        hdr_len, fmt, n_tracks, division = struct.unpack(">IHHH", raw[4:14])
+        ticks_per_beat = division if division > 0 else self.default_ticks_per_beat
+
+        pos = 8 + hdr_len
+        tempo_us = 500000
+        time_sig = "4/4"
+        notes: List[NoteEvent] = []
+
+        track_count = 0
+        while pos + 8 <= len(raw):
+            chunk_type = raw[pos:pos+4]
+            chunk_len = struct.unpack(">I", raw[pos+4:pos+8])[0]
+            pos += 8
+            if chunk_type != b"MTrk":
+                pos += chunk_len
+                continue
+
+            track_idx = track_count
+            track_count += 1
+            trk_end = min(len(raw), pos + chunk_len)
+            trk_pos = pos
+            current_tick = 0
+            active_notes: Dict[Tuple[int, int], Tuple[int, int]] = {}  # (channel, pitch) -> (start_tick, velocity)
+            running_status = 0
+
+            while trk_pos < trk_end:
+                # Read varlen delta
+                delta = 0
+                while trk_pos < trk_end:
+                    b = raw[trk_pos]
+                    trk_pos += 1
+                    delta = (delta << 7) | (b & 0x7F)
+                    if not (b & 0x80):
+                        break
+                current_tick += delta
+
+                if trk_pos >= trk_end:
+                    break
+
+                b = raw[trk_pos]
+                if b & 0x80:
+                    status = b
+                    trk_pos += 1
+                    running_status = status
+                else:
+                    status = running_status
+
+                ev_type = status & 0xF0
+                channel = status & 0x0F
+
+                if status == 0xFF:  # Meta event
+                    if trk_pos >= trk_end:
+                        break
+                    meta_type = raw[trk_pos]
+                    trk_pos += 1
+                    # varlen length
+                    meta_len = 0
+                    while trk_pos < trk_end:
+                        mb = raw[trk_pos]
+                        trk_pos += 1
+                        meta_len = (meta_len << 7) | (mb & 0x7F)
+                        if not (mb & 0x80):
+                            break
+                    meta_data = raw[trk_pos:trk_pos + meta_len]
+                    trk_pos += meta_len
+
+                    if meta_type == 0x51 and len(meta_data) >= 3:
+                        tempo_us = (meta_data[0] << 16) | (meta_data[1] << 8) | meta_data[2]
+                    elif meta_type == 0x58 and len(meta_data) >= 2:
+                        time_sig = f"{meta_data[0]}/{2**meta_data[1]}"
+                elif status in (0xF0, 0xF7):  # SysEx
+                    syx_len = 0
+                    while trk_pos < trk_end:
+                        sb = raw[trk_pos]
+                        trk_pos += 1
+                        syx_len = (syx_len << 7) | (sb & 0x7F)
+                        if not (sb & 0x80):
+                            break
+                    trk_pos += syx_len
+                elif ev_type in (0x80, 0x90):  # Note On / Off
+                    if trk_pos + 1 >= trk_end:
+                        break
+                    pitch = raw[trk_pos]
+                    vel = raw[trk_pos + 1]
+                    trk_pos += 2
+                    key = (channel, pitch)
+
+                    if ev_type == 0x90 and vel > 0:
+                        if key in active_notes:
+                            prev_start, prev_vel = active_notes.pop(key)
+                            dur = max(1, current_tick - prev_start)
+                            notes.append(NoteEvent(pitch=pitch, start_tick=prev_start, end_tick=current_tick, duration_ticks=dur, velocity=prev_vel, channel=channel, track=track_idx))
+                        active_notes[key] = (current_tick, vel)
+                    else:  # Note off
+                        if key in active_notes:
+                            prev_start, prev_vel = active_notes.pop(key)
+                            dur = max(1, current_tick - prev_start)
+                            notes.append(NoteEvent(pitch=pitch, start_tick=prev_start, end_tick=current_tick, duration_ticks=dur, velocity=prev_vel, channel=channel, track=track_idx))
+                elif ev_type in (0xA0, 0xB0, 0xE0):
+                    trk_pos += 2
+                elif ev_type in (0xC0, 0xD0):
+                    trk_pos += 1
+                else:
+                    trk_pos += 1
+
+            for (ch, pitch), (prev_start, prev_vel) in list(active_notes.items()):
+                dur = max(ticks_per_beat // 2, current_tick - prev_start)
+                notes.append(NoteEvent(pitch=pitch, start_tick=prev_start, end_tick=prev_start + dur, duration_ticks=dur, velocity=prev_vel, channel=ch, track=track_idx))
+
+            pos = trk_end
+
+        notes.sort(key=lambda n: (n.start_tick, n.pitch))
+        tempo_bpm = round(60000000.0 / max(1, tempo_us), 2)
+        max_tick = max((n.end_tick for n in notes), default=0)
+        duration_sec = round((max_tick / max(1, ticks_per_beat)) * (tempo_us / 1000000.0), 2)
+        min_p = min((n.pitch for n in notes), default=0)
+        max_p = max((n.pitch for n in notes), default=0)
+
+        info = MidiFileInfo(
+            filename=os.path.basename(filepath),
+            filepath=filepath,
+            file_size_bytes=file_size,
+            duration_sec=duration_sec,
+            ticks_per_beat=ticks_per_beat,
+            tempo_bpm=tempo_bpm,
+            time_signature=time_sig,
+            track_count=max(1, track_count),
+            note_count=len(notes),
+            pitch_range=(min_p, max_p),
+            is_valid=True,
+            content_hash=self.compute_content_hash(notes),
+        )
+        return info, notes
 
     def _parse_with_mido(self, filepath: str) -> Tuple[MidiFileInfo, List[NoteEvent]]:
         mid = mido.MidiFile(filepath, clip=True)

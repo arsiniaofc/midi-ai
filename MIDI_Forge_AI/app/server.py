@@ -11,7 +11,7 @@ import json
 import time
 import urllib.parse
 import mimetypes
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer as HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Any, Optional
 
 # Ensure project root in sys.path
@@ -245,16 +245,22 @@ def make_handler_class(root_dir: str):
                 mode = data.get("mode", "remi")
                 block_size = int(data.get("block_size", 256))
                 augment = bool(data.get("augment_transposition", False))
+                selected_files = data.get("selected_files", [])
 
                 adapter = HybridMusicAdapter(mode=mode)
                 state.current_adapter = adapter
 
-                # Collect all valid midis from datasets dir
+                # Collect matching midis
                 midi_files = []
                 for root, _, files in os.walk(state.project_mgr.datasets_dir):
                     for f in files:
                         if f.lower().endswith((".mid", ".midi")):
-                            midi_files.append(os.path.join(root, f))
+                            if not selected_files or (f in selected_files or os.path.basename(f) in selected_files):
+                                midi_files.append(os.path.join(root, f))
+
+                if not midi_files:
+                    self._send_error("Nenhum arquivo MIDI correspondente encontrado para preparação.")
+                    return
 
                 builder = DatasetBuilder(parser=state.parser)
                 prep_result = builder.prepare_dataset(
@@ -306,36 +312,57 @@ def make_handler_class(root_dir: str):
                 return
 
             if path == "/api/training/start":
-                epochs = int(data.get("epochs", 8))
+                epochs = int(data.get("epochs", 15))
                 batch_size = int(data.get("batch_size", 4))
                 lr = float(data.get("learning_rate", 0.0005))
-                model_name = data.get("model_name", state.active_model_name)
+                model_name = data.get("model_name", state.active_model_name or "Forge_Transformer_v1")
+                selected_files = data.get("selected_files", [])
+                power_preset = data.get("power_preset", "balanced")
+                intensity_pct = int(data.get("intensity_pct", 50))
+                mode = data.get("mode", "remi")
+                block_size = int(data.get("block_size", 128))
+                augment = bool(data.get("augment_transposition", False))
 
-                # Ensure adapter & dataset are ready
-                if state.current_dataset is None:
-                    # Auto-prepare if not done yet
-                    adapter = HybridMusicAdapter(mode="remi")
+                n_layer = int(data.get("n_layer", 4))
+                n_head = int(data.get("n_head", 4))
+                n_embd = int(data.get("n_embd", 128))
+
+                if power_preset == "max_power":
+                    epochs = max(epochs, 50)
+                    n_layer = max(n_layer, 6)
+                    n_embd = max(n_embd, 256)
+                    n_head = max(n_head, 8)
+                    block_size = max(block_size, 256)
+                    augment = True
+
+                # Always build or refresh dataset when selected_files is specified or current_dataset is None
+                if selected_files or state.current_dataset is None or state.current_adapter is None:
+                    adapter = HybridMusicAdapter(mode=mode)
                     state.current_adapter = adapter
-                    midi_files = [
-                        os.path.join(state.project_mgr.datasets_dir, f)
-                        for f in os.listdir(state.project_mgr.datasets_dir)
-                        if f.endswith(".mid")
-                    ]
+                    midi_files = []
+                    for root, _, files in os.walk(state.project_mgr.datasets_dir):
+                        for f in files:
+                            if f.lower().endswith((".mid", ".midi")):
+                                if not selected_files or (f in selected_files or os.path.basename(f) in selected_files):
+                                    midi_files.append(os.path.join(root, f))
+                    if not midi_files:
+                        self._send_error("Nenhum arquivo MIDI selecionado para treino.")
+                        return
                     builder = DatasetBuilder(parser=state.parser)
-                    res = builder.prepare_dataset(midi_files, adapter=adapter, block_size=128)
+                    res = builder.prepare_dataset(midi_files, adapter=adapter, block_size=block_size, augment_transposition=augment)
                     state.current_dataset = res["dataset"]
 
-                # Ensure model is ready
-                if state.current_model is None:
-                    cfg = GPTConfig(
-                        vocab_size=state.current_adapter.vocab_size,
-                        block_size=128,
-                        n_layer=3,
-                        n_head=4,
-                        n_embd=128,
-                    )
-                    state.current_model = MusicGPT(cfg)
+                # Configure model with matching vocab size and architecture
+                cfg = GPTConfig(
+                    vocab_size=state.current_adapter.vocab_size,
+                    block_size=block_size,
+                    n_layer=n_layer,
+                    n_head=n_head,
+                    n_embd=n_embd,
+                )
+                state.current_model = MusicGPT(cfg)
 
+                selected_names = [os.path.basename(f) for f in selected_files] if selected_files else []
                 try:
                     state.trainer.start_training(
                         model=state.current_model,
@@ -344,8 +371,12 @@ def make_handler_class(root_dir: str):
                         epochs=epochs,
                         batch_size=batch_size,
                         learning_rate=lr,
+                        power_preset=power_preset,
+                        intensity_pct=intensity_pct,
+                        selected_midis_count=len(selected_names),
+                        selected_midis_names=selected_names,
                     )
-                    self._send_json({"status": "success", "message": "Treinamento iniciado."})
+                    self._send_json({"status": "success", "message": "Treinamento iniciado com sucesso."})
                 except Exception as e:
                     self._send_error(str(e))
                 return

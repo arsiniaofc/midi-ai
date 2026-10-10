@@ -1,0 +1,11 @@
+{
+  "epoch": 2,
+  "step": 6,
+  "model_name": "test_ctrl",
+  "power_preset": "balanced",
+  "selected_midis_count": 0,
+  "selected_midis_names": [],
+  "train_loss": 3.6116,
+  "val_loss": 3.7346,
+  "timestamp": 1791645229.8830004
+}

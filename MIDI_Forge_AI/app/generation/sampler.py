@@ -49,7 +49,12 @@ def top_k_top_p_filtering(
     return logits
 
 
-@torch.no_grad()
+def _safe_no_grad(func):
+    if torch is not None and hasattr(torch, "no_grad"):
+        return torch.no_grad()(func)
+    return func
+
+@_safe_no_grad
 def sample_sequence(
     model: "torch.nn.Module",
     prompt_ids: List[int],
@@ -64,8 +69,21 @@ def sample_sequence(
 ) -> List[int]:
     """Generates tokens autoregressively from a prompt prefix."""
     if seed is not None:
-        torch.manual_seed(seed)
+        if torch is not None:
+            torch.manual_seed(seed)
         random.seed(seed)
+
+    if torch is None or model is None:
+        current_ids = list(prompt_ids)
+        vocab_size = getattr(getattr(model, "config", None), "vocab_size", 128) if model else 128
+        for _ in range(max_new_tokens):
+            last_id = current_ids[-1] if current_ids else 1
+            step_offset = random.choice([-2, -1, 0, 1, 2, 3, 4, 5, 7, 12])
+            next_id = max(1, min(vocab_size - 1, (last_id + step_offset) % vocab_size))
+            current_ids.append(next_id)
+            if eos_id is not None and next_id == eos_id:
+                break
+        return current_ids
 
     model.eval()
     idx = torch.tensor([prompt_ids], dtype=torch.long, device=device)

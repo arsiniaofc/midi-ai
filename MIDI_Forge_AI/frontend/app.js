@@ -118,6 +118,29 @@ function initSliders() {
     });
   }
 
+  const intensitySlider = document.getElementById('train-intensity-slider');
+  if (intensitySlider) {
+    intensitySlider.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value);
+      document.getElementById('intensity-val').innerText = `${val}%`;
+      const epochs = Math.max(3, Math.round((val / 100) * 80));
+      document.getElementById('train-epochs').value = epochs;
+      if (val < 25) {
+        document.getElementById('train-layers').value = 2;
+        document.getElementById('train-embd').value = 64;
+      } else if (val < 60) {
+        document.getElementById('train-layers').value = 4;
+        document.getElementById('train-embd').value = 128;
+      } else if (val < 85) {
+        document.getElementById('train-layers').value = 6;
+        document.getElementById('train-embd').value = 256;
+      } else {
+        document.getElementById('train-layers').value = 8;
+        document.getElementById('train-embd').value = 384;
+      }
+    });
+  }
+
   const genModeSelect = document.getElementById('gen-mode');
   if (genModeSelect) {
     genModeSelect.addEventListener('change', (e) => {
@@ -135,23 +158,55 @@ function initPresets() {
       presetBtns.forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       const preset = btn.getAttribute('data-preset');
-      if (preset === 'cpu') {
+      const slider = document.getElementById('train-intensity-slider');
+      if (preset === 'fast') {
+        document.getElementById('train-epochs').value = 5;
         document.getElementById('train-layers').value = 2;
-        document.getElementById('train-heads').value = 4;
+        document.getElementById('train-heads').value = 2;
         document.getElementById('train-embd').value = 64;
         document.getElementById('train-batch').value = 4;
+        if (slider) { slider.value = 20; document.getElementById('intensity-val').innerText = '20%'; }
       } else if (preset === 'balanced') {
+        document.getElementById('train-epochs').value = 15;
         document.getElementById('train-layers').value = 4;
         document.getElementById('train-heads').value = 4;
         document.getElementById('train-embd').value = 128;
-        document.getElementById('train-batch').value = 8;
+        document.getElementById('train-batch').value = 4;
+        if (slider) { slider.value = 50; document.getElementById('intensity-val').innerText = '50%'; }
       } else if (preset === 'deep') {
+        document.getElementById('train-epochs').value = 35;
         document.getElementById('train-layers').value = 6;
         document.getElementById('train-heads').value = 8;
         document.getElementById('train-embd').value = 256;
         document.getElementById('train-batch').value = 8;
+        if (slider) { slider.value = 75; document.getElementById('intensity-val').innerText = '75%'; }
+      } else if (preset === 'max_power') {
+        // POTÊNCIA MÁXIMA / FORGE OVERDRIVE
+        document.getElementById('train-epochs').value = 75;
+        document.getElementById('train-layers').value = 8;
+        document.getElementById('train-heads').value = 8;
+        document.getElementById('train-embd').value = 384;
+        document.getElementById('train-batch').value = 8;
+        if (slider) { slider.value = 100; document.getElementById('intensity-val').innerText = '100%'; }
       }
     });
+  });
+
+  // Specific MIDI selection buttons
+  document.getElementById('btn-select-all-midis')?.addEventListener('click', () => {
+    App.selectedFileNames = App.libraryFiles.map(f => f.filename);
+    renderMidiSelectionList();
+  });
+
+  document.getElementById('btn-deselect-all-midis')?.addEventListener('click', () => {
+    App.selectedFileNames = [];
+    renderMidiSelectionList();
+  });
+
+  document.getElementById('btn-copy-terminal')?.addEventListener('click', () => {
+    const text = (App.currentLogs || []).join('\n');
+    navigator.clipboard.writeText(text);
+    alert('Logs copiados para a área de transferência!');
   });
 }
 
@@ -498,6 +553,13 @@ async function startTraining() {
   const layers = parseInt(document.getElementById('train-layers').value);
   const heads = parseInt(document.getElementById('train-heads').value);
   const embd = parseInt(document.getElementById('train-embd').value);
+  const useOnlySelected = document.getElementById('check-use-only-selected')?.checked || false;
+  const selectedMidis = useOnlySelected ? Array.from(App.selectedMidis || []) : [];
+
+  if (useOnlySelected && selectedMidis.length === 0) {
+    alert('Atenção: Selecione ao menos 1 arquivo MIDI na lista abaixo para treinar especificamente!');
+    return;
+  }
 
   // Create model config first
   await fetch('/api/models/create', {
@@ -510,7 +572,18 @@ async function startTraining() {
   const res = await fetch('/api/training/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model_name: modelName, epochs, batch_size: batchSize, learning_rate: lr }),
+    body: JSON.stringify({
+      model_name: modelName,
+      epochs,
+      batch_size: batchSize,
+      learning_rate: lr,
+      selected_files: selectedMidis,
+      power_preset: App.currentPreset || 'balanced',
+      intensity_pct: parseInt(document.getElementById('train-intensity-slider')?.value || 50),
+      n_layer: layers,
+      n_head: heads,
+      n_embd: embd,
+    }),
   });
   const data = await res.json();
 

@@ -1,6 +1,10 @@
 /**
  * MIDI Forge AI - Studio & Local Training Interface
- * Integrates aiMIDI (REMI) and Theremin MIDI (BPE/GPT) hybrid engine
+ * Integrates aiMIDI (REMI) and Theremin MIDI (BPE/GPT) hybrid engine.
+ * Features:
+ * - Live step-by-step progress HUD and streaming terminal logs
+ * - Specific MIDI selection for training
+ * - Training presets including "POTÊNCIA MÁXIMA" (Overdrive Beast Mode)
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -24,7 +28,14 @@ import {
   FileText,
   CheckCircle2,
   XCircle,
-  AlertCircle
+  AlertCircle,
+  Flame,
+  Zap,
+  CheckSquare,
+  Square as SquareIcon,
+  Terminal,
+  Activity,
+  Gauge
 } from 'lucide-react';
 
 interface MidiFileInfo {
@@ -56,6 +67,8 @@ interface TrainProgress {
   total_epochs: number;
   current_step: number;
   total_steps: number;
+  step_in_epoch?: number;
+  steps_per_epoch?: number;
   epoch_progress_pct: number;
   overall_progress_pct: number;
   current_train_loss: number;
@@ -63,9 +76,15 @@ interface TrainProgress {
   learning_rate: number;
   elapsed_sec: number;
   remaining_sec: number;
+  steps_per_sec?: number;
   device: string;
   gpu_name?: string;
+  power_preset?: string;
+  intensity_pct?: number;
+  selected_midis_count?: number;
+  selected_midis_names?: string[];
   loss_history?: Array<{ step: number; epoch: number; train_loss: number; val_loss: number }>;
+  logs?: string[];
 }
 
 export default function App() {
@@ -81,9 +100,11 @@ export default function App() {
   });
   const [hwStatus, setHwStatus] = useState({ device: 'CPU', gpu_name: null as string | null, torch_version: '' });
 
-  // Library state
+  // Library & File selection for training
   const [libraryFiles, setLibraryFiles] = useState<MidiFileInfo[]>([]);
-  const [selectedFile, setSelectedFile] = useState<MidiFileInfo | null>(null);
+  const [selectedFileNames, setSelectedFileNames] = useState<string[]>([]);
+  const [useOnlySelectedMidis, setUseOnlySelectedMidis] = useState(false);
+  const [inspectedFile, setInspectedFile] = useState<MidiFileInfo | null>(null);
   const [previewNotes, setPreviewNotes] = useState<NoteEvent[]>([]);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
@@ -94,21 +115,27 @@ export default function App() {
   const [prepReport, setPrepReport] = useState<any>(null);
   const [isPrepping, setIsPrepping] = useState(false);
 
-  // Training state
+  // Training Presets & Intensity State
+  const [activePreset, setActivePreset] = useState<'fast' | 'balanced' | 'deep' | 'max_power' | 'custom'>('balanced');
+  const [trainIntensity, setTrainIntensity] = useState(50);
   const [trainModelName, setTrainModelName] = useState('Forge_Transformer_v1');
-  const [trainEpochs, setTrainEpochs] = useState(10);
+  const [trainEpochs, setTrainEpochs] = useState(15);
   const [trainBatch, setTrainBatch] = useState(4);
   const [trainLr, setTrainLr] = useState(0.0005);
-  const [trainLayers, setTrainLayers] = useState(3);
+  const [trainLayers, setTrainLayers] = useState(4);
   const [trainHeads, setTrainHeads] = useState(4);
   const [trainEmbd, setTrainEmbd] = useState(128);
+  const [trainSeqLen, setTrainSeqLen] = useState(128);
+
   const [trainProgress, setTrainProgress] = useState<TrainProgress>({
     status: 'idle',
     model_name: '',
     current_epoch: 0,
-    total_epochs: 10,
+    total_epochs: 15,
     current_step: 0,
     total_steps: 0,
+    step_in_epoch: 0,
+    steps_per_epoch: 0,
     epoch_progress_pct: 0,
     overall_progress_pct: 0,
     current_train_loss: 0,
@@ -117,7 +144,17 @@ export default function App() {
     elapsed_sec: 0,
     remaining_sec: 0,
     device: 'cpu',
+    logs: [],
   });
+
+  // Search filter for MIDIs
+  const [midiSearchQuery, setMidiSearchQuery] = useState('');
+  const [showAdvancedTrainParams, setShowAdvancedTrainParams] = useState(false);
+  const [activeAudioFilename, setActiveAudioFilename] = useState<string | null>(null);
+
+  // Terminal log auto-scroll
+  const terminalRef = useRef<HTMLDivElement | null>(null);
+  const [autoScrollLogs, setAutoScrollLogs] = useState(true);
 
   // Generation state
   const [genMode, setGenMode] = useState<'unconditional' | 'reference'>('unconditional');
@@ -155,13 +192,20 @@ export default function App() {
 
     const interval = setInterval(() => {
       fetchTrainingProgress();
-    }, 1000);
+    }, 450);
 
     return () => {
       clearInterval(interval);
       stopAudioPlayback();
     };
   }, []);
+
+  // Auto-scroll terminal logs
+  useEffect(() => {
+    if (autoScrollLogs && terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [trainProgress.logs, autoScrollLogs]);
 
   const fetchStatus = async () => {
     try {
@@ -188,9 +232,14 @@ export default function App() {
       const res = await fetch('/api/library');
       if (res.ok) {
         const d = await res.json();
-        setLibraryFiles(d.files || []);
-        if (d.files?.length && !selectedFile) {
-          inspectFile(d.files[0]);
+        const files: MidiFileInfo[] = d.files || [];
+        setLibraryFiles(files);
+        // By default, select all files if not set yet
+        if (selectedFileNames.length === 0 && files.length > 0) {
+          setSelectedFileNames(files.map((f) => f.filename));
+        }
+        if (files.length > 0 && !inspectedFile) {
+          inspectFile(files[0]);
         }
       }
     } catch {}
@@ -221,7 +270,7 @@ export default function App() {
 
   // Inspect file and show notes
   const inspectFile = (file: MidiFileInfo) => {
-    setSelectedFile(file);
+    setInspectedFile(file);
     const notes: NoteEvent[] = [];
     const minP = file.pitch_range?.[0] || 48;
     const maxP = file.pitch_range?.[1] || 72;
@@ -240,6 +289,91 @@ export default function App() {
     setPreviewNotes(notes);
     if (libraryCanvasRef.current) {
       drawPianoRoll(libraryCanvasRef.current, notes);
+    }
+  };
+
+  // Selection toggles
+  const toggleSelectFile = (filename: string) => {
+    setSelectedFileNames((prev) =>
+      prev.includes(filename) ? prev.filter((f) => f !== filename) : [...prev, filename]
+    );
+  };
+
+  const selectAllMidis = () => {
+    setSelectedFileNames(libraryFiles.map((f) => f.filename));
+  };
+
+  const deselectAllMidis = () => {
+    setSelectedFileNames([]);
+  };
+
+  // Presets handler
+  const applyPreset = (preset: 'fast' | 'balanced' | 'deep' | 'max_power' | 'custom') => {
+    setActivePreset(preset);
+    if (preset === 'fast') {
+      setTrainEpochs(5);
+      setTrainBatch(4);
+      setTrainLayers(2);
+      setTrainHeads(2);
+      setTrainEmbd(64);
+      setTrainSeqLen(64);
+      setTrainLr(0.001);
+      setTrainIntensity(20);
+    } else if (preset === 'balanced') {
+      setTrainEpochs(15);
+      setTrainBatch(4);
+      setTrainLayers(4);
+      setTrainHeads(4);
+      setTrainEmbd(128);
+      setTrainSeqLen(128);
+      setTrainLr(0.0005);
+      setTrainIntensity(50);
+    } else if (preset === 'deep') {
+      setTrainEpochs(35);
+      setTrainBatch(8);
+      setTrainLayers(6);
+      setTrainHeads(8);
+      setTrainEmbd(256);
+      setTrainSeqLen(256);
+      setTrainLr(0.0003);
+      setTrainIntensity(75);
+    } else if (preset === 'max_power') {
+      // POTÊNCIA MÁXIMA / FORGE OVERDRIVE
+      setTrainEpochs(75);
+      setTrainBatch(8);
+      setTrainLayers(8);
+      setTrainHeads(8);
+      setTrainEmbd(384);
+      setTrainSeqLen(512);
+      setTrainLr(0.00025);
+      setTrainIntensity(100);
+      setPrepAugment(true);
+    }
+  };
+
+  // Intensity slider handler
+  const handleIntensitySlider = (val: number) => {
+    setTrainIntensity(val);
+    setActivePreset('custom');
+    // Scale epochs between 3 and 100
+    const calculatedEpochs = Math.max(3, Math.round((val / 100) * 80));
+    setTrainEpochs(calculatedEpochs);
+    if (val < 30) {
+      setTrainLayers(2);
+      setTrainEmbd(64);
+      setTrainSeqLen(64);
+    } else if (val < 65) {
+      setTrainLayers(4);
+      setTrainEmbd(128);
+      setTrainSeqLen(128);
+    } else if (val < 90) {
+      setTrainLayers(6);
+      setTrainEmbd(256);
+      setTrainSeqLen(256);
+    } else {
+      setTrainLayers(8);
+      setTrainEmbd(384);
+      setTrainSeqLen(512);
     }
   };
 
@@ -295,64 +429,104 @@ export default function App() {
   };
 
   // Draw Loss Chart
-  const drawLossChart = (canvas: HTMLCanvasElement, history: Array<{ train_loss: number; val_loss: number }>) => {
+  const drawLossChart = (canvas: HTMLCanvasElement, history: Array<{ train_loss: number; val_loss: number; step?: number }>) => {
     const ctx = canvas.getContext('2d');
-    if (!ctx || !history.length) return;
+    if (!ctx) return;
     const w = canvas.width;
     const h = canvas.height;
 
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#0f141d';
+    ctx.fillStyle = '#0a0d14';
     ctx.fillRect(0, 0, w, h);
+
+    if (!history || history.length === 0) {
+      ctx.fillStyle = '#4a5568';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Aguardando passos para plotar curva de convergência de Loss...', w / 2, h / 2);
+      return;
+    }
 
     let maxL = 0, minL = 100;
     history.forEach((pt) => {
       if (pt.train_loss > maxL) maxL = pt.train_loss;
       if (pt.train_loss < minL) minL = pt.train_loss;
+      if (pt.val_loss > maxL) maxL = pt.val_loss;
+      if (pt.val_loss < minL) minL = pt.val_loss;
     });
-    maxL = Math.max(1.0, maxL * 1.1);
-    minL = Math.max(0, minL * 0.8);
+    maxL = Math.max(1.0, maxL * 1.15);
+    minL = Math.max(0, minL * 0.85);
     const range = maxL - minL || 1.0;
 
     // Grid
-    ctx.strokeStyle = '#222b3a';
+    ctx.strokeStyle = '#1b2333';
     ctx.lineWidth = 1;
-    for (let y = 20; y < h - 20; y += 40) {
+    ctx.font = '9px monospace';
+    ctx.fillStyle = '#5a6882';
+    ctx.textAlign = 'left';
+
+    const gridSteps = 4;
+    for (let g = 0; g <= gridSteps; g++) {
+      const yVal = minL + (range * g) / gridSteps;
+      const y = h - 25 - (g / gridSteps) * (h - 45);
       ctx.beginPath();
-      ctx.moveTo(40, y);
-      ctx.lineTo(w - 10, y);
+      ctx.moveTo(38, y);
+      ctx.lineTo(w - 12, y);
       ctx.stroke();
+      ctx.fillText(yVal.toFixed(2), 6, y + 3);
     }
 
-    // Train loss (cyan)
+    // Train loss gradient fill
+    const trainGrad = ctx.createLinearGradient(0, 20, 0, h - 25);
+    trainGrad.addColorStop(0, 'rgba(0, 229, 255, 0.25)');
+    trainGrad.addColorStop(1, 'rgba(0, 229, 255, 0.0)');
+
+    ctx.fillStyle = trainGrad;
+    ctx.beginPath();
+    ctx.moveTo(38, h - 25);
+    history.forEach((pt, i) => {
+      const x = 38 + (i / Math.max(1, history.length - 1)) * (w - 50);
+      const y = h - 25 - ((pt.train_loss - minL) / range) * (h - 45);
+      ctx.lineTo(x, y);
+    });
+    ctx.lineTo(38 + (w - 50), h - 25);
+    ctx.closePath();
+    ctx.fill();
+
+    // Train loss stroke (Cyan)
     ctx.strokeStyle = '#00e5ff';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
     history.forEach((pt, i) => {
-      const x = 40 + (i / (history.length - 1 || 1)) * (w - 60);
-      const y = h - 20 - ((pt.train_loss - minL) / range) * (h - 40);
+      const x = 38 + (i / Math.max(1, history.length - 1)) * (w - 50);
+      const y = h - 25 - ((pt.train_loss - minL) / range) * (h - 45);
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
     ctx.stroke();
 
-    // Val loss (amber)
+    // Val loss stroke (Amber)
     ctx.strokeStyle = '#ff9100';
     ctx.lineWidth = 2;
+    ctx.setLineDash([4, 3]);
     ctx.beginPath();
     history.forEach((pt, i) => {
-      const x = 40 + (i / (history.length - 1 || 1)) * (w - 60);
-      const y = h - 20 - ((pt.val_loss - minL) / range) * (h - 40);
+      const x = 38 + (i / Math.max(1, history.length - 1)) * (w - 50);
+      const y = h - 25 - ((pt.val_loss - minL) / range) * (h - 45);
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
     ctx.stroke();
+    ctx.setLineDash([]);
 
-    ctx.font = '11px sans-serif';
+    // Legend
+    const last = history[history.length - 1];
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'right';
     ctx.fillStyle = '#00e5ff';
-    ctx.fillText('● Loss Treino', w - 180, 20);
+    ctx.fillText(`● Loss Treino: ${last.train_loss.toFixed(4)}`, w - 150, 16);
     ctx.fillStyle = '#ff9100';
-    ctx.fillText('● Loss Validação', w - 90, 20);
+    ctx.fillText(`-- Loss Val: ${last.val_loss.toFixed(4)}`, w - 15, 16);
   };
 
   // Web Audio Synth
@@ -458,6 +632,7 @@ export default function App() {
           mode: prepMode,
           block_size: prepBlockSize,
           augment_transposition: prepAugment,
+          selected_files: useOnlySelectedMidis ? selectedFileNames : [],
         }),
       });
       if (res.ok) {
@@ -473,28 +648,92 @@ export default function App() {
 
   // Training controls
   const handleStartTraining = async () => {
-    await fetch('/api/models/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: trainModelName,
-        n_layer: trainLayers,
-        n_head: trainHeads,
-        n_embd: trainEmbd,
-      }),
-    });
+    const effectiveFiles = useOnlySelectedMidis ? selectedFileNames : [];
+    if (useOnlySelectedMidis && effectiveFiles.length === 0) {
+      alert("Atenção: Você ativou 'Apenas MIDIs Selecionados', mas não marcou nenhuma música. Selecione ao menos 1 arquivo MIDI na lista abaixo!");
+      return;
+    }
 
-    await fetch('/api/training/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model_name: trainModelName,
-        epochs: trainEpochs,
-        batch_size: trainBatch,
-        learning_rate: trainLr,
-      }),
-    });
-    fetchTrainingProgress();
+    // Optimistic UI update so the user immediately perceives the start of training
+    setTrainProgress((prev) => ({
+      ...prev,
+      status: 'running',
+      model_name: trainModelName,
+      total_epochs: trainEpochs,
+      current_epoch: 0,
+      current_step: 0,
+      epoch_progress_pct: 0,
+      overall_progress_pct: 0,
+      power_preset: activePreset,
+      intensity_pct: trainIntensity,
+      selected_midis_count: effectiveFiles.length,
+      selected_midis_names: effectiveFiles,
+      logs: [
+        `[INICIANDO] Conectando ao motor local de IA para '${trainModelName}'...`,
+        activePreset === 'max_power'
+          ? '🔥 [POTÊNCIA MÁXIMA] Ativando 100% de núcleos de CPU/GPU e aceleração tensorial extrema!'
+          : `[PRESET] Modo ativo: ${activePreset.toUpperCase()} (${trainEpochs} épocas, ${trainIntensity}% intensidade)`,
+        useOnlySelectedMidis
+          ? `[DATASET ESPECÍFICO] Treinando exclusivamente em ${effectiveFiles.length} arquivos selecionados.`
+          : `[DATASET GERAL] Treinando em todos os ${libraryFiles.length} arquivos MIDI da biblioteca.`,
+      ],
+    }));
+
+    try {
+      await fetch('/api/training/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model_name: trainModelName,
+          epochs: trainEpochs,
+          batch_size: trainBatch,
+          learning_rate: trainLr,
+          selected_files: effectiveFiles,
+          power_preset: activePreset,
+          intensity_pct: trainIntensity,
+          n_layer: trainLayers,
+          n_head: trainHeads,
+          n_embd: trainEmbd,
+          block_size: trainSeqLen,
+          mode: prepMode,
+          augment_transposition: activePreset === 'max_power' || prepAugment,
+        }),
+      });
+      fetchTrainingProgress();
+      setTimeout(fetchTrainingProgress, 250);
+      setTimeout(fetchTrainingProgress, 500);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const playFileByName = (filename: string) => {
+    if (activeAudioFilename === filename && isPlayingAudio) {
+      stopAudioPlayback();
+      setActiveAudioFilename(null);
+      return;
+    }
+    const f = libraryFiles.find((x) => x.filename === filename);
+    if (f) {
+      inspectFile(f);
+      setActiveAudioFilename(filename);
+      const notes: NoteEvent[] = [];
+      const minP = f.pitch_range?.[0] || 48;
+      const maxP = f.pitch_range?.[1] || 72;
+      const count = Math.min(f.note_count || 48, 64);
+      let curTick = 0;
+      for (let i = 0; i < count; i++) {
+        const pitch = minP + Math.floor(Math.sin(i * 0.45) * ((maxP - minP) / 2) + (maxP - minP) / 2);
+        notes.push({
+          pitch,
+          start_tick: curTick,
+          duration_ticks: 240,
+          velocity: 80,
+        });
+        curTick += 240;
+      }
+      playNotesInBrowser(notes);
+    }
   };
 
   // Generation
@@ -551,12 +790,14 @@ export default function App() {
     }
   };
 
+  const isTrainingActive = trainProgress.status === 'running' || trainProgress.status === 'paused';
+
   return (
     <div className="flex h-screen bg-[#0a0c10] text-[#f0f4f8] font-sans overflow-hidden">
       {/* Sidebar */}
       <aside className="w-64 bg-[#10141b] border-r border-[#242c3b] flex flex-col shrink-0">
         <div className="p-5 flex items-center gap-3 border-b border-[#242c3b]">
-          <div className="w-9 h-9 rounded-lg bg-[#00e5ff]/10 text-[#00e5ff] flex items-center justify-center border border-[#00e5ff]/30">
+          <div className="w-9 h-9 rounded-lg bg-[#00e5ff]/10 text-[#00e5ff] flex items-center justify-center border border-[#00e5ff]/30 shadow-[0_0_10px_rgba(0,229,255,0.2)]">
             <Music className="w-5 h-5" />
           </div>
           <div>
@@ -570,7 +811,7 @@ export default function App() {
             { id: 'dashboard', label: 'Dashboard', icon: Layers },
             { id: 'library', label: 'Biblioteca MIDI', icon: FolderOpen },
             { id: 'dataprep', label: 'Preparação de Dados', icon: Sliders },
-            { id: 'training', label: 'Treinamento', icon: Cpu },
+            { id: 'training', label: 'Laboratório de Treino', icon: Cpu },
             { id: 'generation', label: 'Estúdio de Geração', icon: Play },
             { id: 'history', label: 'Histórico & Exportação', icon: History },
             { id: 'diagnostics', label: 'Diagnósticos (20 Testes)', icon: ShieldCheck },
@@ -589,7 +830,10 @@ export default function App() {
                 }`}
               >
                 <Icon className="w-4 h-4" />
-                <span>{item.label}</span>
+                <span className="flex-1">{item.label}</span>
+                {item.id === 'training' && isTrainingActive && (
+                  <span className="w-2 h-2 rounded-full bg-[#00e5ff] animate-ping" />
+                )}
               </button>
             );
           })}
@@ -614,7 +858,7 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-y-auto bg-[#0a0c10]">
         {/* Topbar */}
-        <header className="px-7 py-4 bg-[#10141b] border-b border-[#242c3b] flex justify-between items-center shrink-0">
+        <header className="px-7 py-3.5 bg-[#10141b] border-b border-[#242c3b] flex justify-between items-center shrink-0">
           <div>
             <h1 className="text-base font-bold">
               {activeTab === 'dashboard' && 'Painel de Controle'}
@@ -632,9 +876,6 @@ export default function App() {
             <span className="text-xs font-mono bg-[#161b24] border border-[#242c3b] px-3 py-1 rounded-full text-[#8a96a8]">
               Dispositivo: {hwStatus.device} {hwStatus.gpu_name ? `(${hwStatus.gpu_name})` : ''}
             </span>
-            <span className="text-xs font-mono bg-[#161b24] border border-[#242c3b] px-3 py-1 rounded-full text-[#8a96a8]">
-              Disco: {stats.disk_usage_mb} MB
-            </span>
             <button
               onClick={() => setActiveTab('generation')}
               className="flex items-center gap-2 bg-[#00e5ff] text-black px-4 py-1.5 rounded text-xs font-bold hover:bg-[#33ebff] transition"
@@ -645,6 +886,48 @@ export default function App() {
           </div>
         </header>
 
+        {/* Global Persistent Training HUD Bar (Visible across all tabs when training) */}
+        {isTrainingActive && (
+          <div className="bg-gradient-to-r from-[#141b24] via-[#102433] to-[#141b24] border-b border-[#00e5ff]/40 px-7 py-2.5 flex items-center justify-between text-xs animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <span className="flex h-3 w-3 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00e5ff] opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-[#00e5ff]"></span>
+              </span>
+              <span className="font-bold text-[#00e5ff] tracking-wide uppercase">
+                Treinamento em Andamento: {trainProgress.model_name || 'Modelo'}
+              </span>
+              <span className="text-[#8a96a8] border-l border-[#242c3b] pl-3">
+                Época {trainProgress.current_epoch + 1} de {trainProgress.total_epochs}
+              </span>
+              <span className="text-[#8a96a8]">
+                Passo {trainProgress.current_step} de {trainProgress.total_steps}
+              </span>
+              <span className="text-[#00e5ff] font-mono font-bold">
+                Loss: {(trainProgress.current_train_loss || 0).toFixed(4)}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="w-48 bg-[#090b10] rounded-full h-2 overflow-hidden border border-[#242c3b]">
+                <div
+                  className="bg-gradient-to-r from-[#00e5ff] to-[#00e676] h-full transition-all duration-300"
+                  style={{ width: `${trainProgress.overall_progress_pct || 0}%` }}
+                />
+              </div>
+              <span className="font-mono text-[11px] text-[#00e5ff] font-bold">
+                {trainProgress.overall_progress_pct || 0}%
+              </span>
+              <button
+                onClick={() => setActiveTab('training')}
+                className="px-2.5 py-1 bg-[#00e5ff]/20 text-[#00e5ff] border border-[#00e5ff]/40 hover:bg-[#00e5ff]/30 rounded text-[11px] font-semibold transition"
+              >
+                Abrir Monitor
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="p-7 flex-1">
           {/* 1. DASHBOARD */}
           {activeTab === 'dashboard' && (
@@ -653,12 +936,14 @@ export default function App() {
                 <div className="bg-[#161b24] border border-[#242c3b] p-4 rounded-lg">
                   <div className="text-xs text-[#8a96a8]">MIDIs Carregados</div>
                   <div className="text-2xl font-bold font-mono text-[#00e5ff] mt-1">{stats.imported_midi_count}</div>
-                  <div className="text-[10px] text-[#5a6473] mt-1">Arquivos SMF locais</div>
+                  <div className="text-[10px] text-[#5a6473] mt-1">
+                    {selectedFileNames.length} selecionados para treino
+                  </div>
                 </div>
                 <div className="bg-[#161b24] border border-[#242c3b] p-4 rounded-lg">
                   <div className="text-xs text-[#8a96a8]">Checkpoints Salvos</div>
                   <div className="text-2xl font-bold font-mono text-[#ff9100] mt-1">{stats.checkpoints_count}</div>
-                  <div className="text-[10px] text-[#5a6473] mt-1">Pesos em disco</div>
+                  <div className="text-[10px] text-[#5a6473] mt-1">Pesos neurais em disco</div>
                 </div>
                 <div className="bg-[#161b24] border border-[#242c3b] p-4 rounded-lg">
                   <div className="text-xs text-[#8a96a8]">Músicas Geradas</div>
@@ -666,7 +951,7 @@ export default function App() {
                   <div className="text-[10px] text-[#5a6473] mt-1">Exportadas para FL Studio</div>
                 </div>
                 <div className="bg-[#161b24] border border-[#242c3b] p-4 rounded-lg">
-                  <div className="text-xs text-[#8a96a8]">Estado do Motor</div>
+                  <div className="text-xs text-[#8a96a8]">Status do Motor</div>
                   <div className="text-2xl font-bold font-mono text-[#00e5ff] mt-1">{trainProgress.status.toUpperCase()}</div>
                   <div className="text-[10px] text-[#5a6473] mt-1">PyTorch {hwStatus.torch_version || '2.x'}</div>
                 </div>
@@ -681,24 +966,24 @@ export default function App() {
                       className="bg-[#10141b] border border-[#242c3b] p-4 rounded hover:border-[#00e5ff] text-left transition"
                     >
                       <FolderOpen className="w-5 h-5 text-[#00e5ff] mb-2" />
-                      <div className="text-xs font-semibold">Biblioteca MIDI</div>
-                      <div className="text-[11px] text-[#8a96a8] mt-0.5">Carregar coleção ou arquivos sintéticos</div>
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('dataprep')}
-                      className="bg-[#10141b] border border-[#242c3b] p-4 rounded hover:border-[#00e5ff] text-left transition"
-                    >
-                      <Sliders className="w-5 h-5 text-[#ff9100] mb-2" />
-                      <div className="text-xs font-semibold">Preparação de Dados</div>
-                      <div className="text-[11px] text-[#8a96a8] mt-0.5">Configurar REMI ou Theremin BPE</div>
+                      <div className="text-xs font-semibold">Biblioteca & Seleção</div>
+                      <div className="text-[11px] text-[#8a96a8] mt-0.5">Escolher MIDIs específicos</div>
                     </button>
                     <button
                       onClick={() => setActiveTab('training')}
-                      className="bg-[#10141b] border border-[#242c3b] p-4 rounded hover:border-[#00e5ff] text-left transition"
+                      className="bg-[#10141b] border border-[#242c3b] p-4 rounded hover:border-[#ff9100] text-left transition"
                     >
-                      <Cpu className="w-5 h-5 text-[#00e676] mb-2" />
-                      <div className="text-xs font-semibold">Treinar Modelo</div>
-                      <div className="text-[11px] text-[#8a96a8] mt-0.5">Ajustar camadas e rodar épocas</div>
+                      <Flame className="w-5 h-5 text-[#ff9100] mb-2" />
+                      <div className="text-xs font-semibold">Treinar em Potência Máxima</div>
+                      <div className="text-[11px] text-[#8a96a8] mt-0.5">Presets leves até Overdrive Beast</div>
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('generation')}
+                      className="bg-[#10141b] border border-[#242c3b] p-4 rounded hover:border-[#00e676] text-left transition"
+                    >
+                      <Play className="w-5 h-5 text-[#00e676] mb-2" />
+                      <div className="text-xs font-semibold">Compor Nova Música</div>
+                      <div className="text-[11px] text-[#8a96a8] mt-0.5">Geração e continuação musical</div>
                     </button>
                     <button
                       onClick={() => {
@@ -715,24 +1000,30 @@ export default function App() {
                 </div>
 
                 <div className="bg-[#161b24] border border-[#242c3b] rounded-lg p-5">
-                  <h3 className="text-sm font-semibold mb-3">Integração aiMIDI & Theremin MIDI</h3>
+                  <h3 className="text-sm font-semibold mb-3">Recursos Recentes Adicionados</h3>
                   <div className="space-y-3 text-xs">
                     <div className="p-3 bg-[#10141b] rounded border border-[#242c3b]">
-                      <div className="font-semibold text-[#00e5ff]">Tokenização REMI (aiMIDI)</div>
+                      <div className="font-semibold text-[#00e5ff] flex items-center gap-1.5">
+                        <Activity className="w-4 h-4" /> Monitor de Progresso em Tempo Real
+                      </div>
                       <p className="text-[#8a96a8] mt-1 text-[11px]">
-                        Eventos de Bar, Position (16 subdivisions), Pitch (21-108), Velocity bins e Duration tokens para harmonia quantizada.
+                        Barras de progresso duplas (passo atual na época e progresso total), streaming de logs no console terminal e atualização contínua de Loss.
                       </p>
                     </div>
                     <div className="p-3 bg-[#10141b] rounded border border-[#242c3b]">
-                      <div className="font-semibold text-[#ff9100]">Serialização & BPE (Theremin MIDI)</div>
+                      <div className="font-semibold text-[#ff9100] flex items-center gap-1.5">
+                        <CheckSquare className="w-4 h-4" /> Treinamento com MIDIs Específicos
+                      </div>
                       <p className="text-[#8a96a8] mt-1 text-[11px]">
-                        Stream textual serializado com fusão de pares de bytes (BPE) para frases musicais e condicionamento por MIDI de referência.
+                        Filtre exatamente quais arquivos participarão do treinamento. O modelo se especializará apenas nos padrões das músicas marcadas.
                       </p>
                     </div>
                     <div className="p-3 bg-[#10141b] rounded border border-[#242c3b]">
-                      <div className="font-semibold text-[#00e676]">Núcleo Autorregressivo GPT</div>
+                      <div className="font-semibold text-[#ff3366] flex items-center gap-1.5">
+                        <Flame className="w-4 h-4" /> Presets de Treino até POTÊNCIA MÁXIMA
+                      </div>
                       <p className="text-[#8a96a8] mt-1 text-[11px]">
-                        Multi-head causal attention, checkpoints recuperáveis, parada segura e validação final rigorosa para compatibilidade com FL Studio.
+                        Escolha o nível de esforço da IA: desde demonstrações ultrarrápidas de 5 épocas até 75+ épocas com modelo expandido e transposições.
                       </p>
                     </div>
                   </div>
@@ -741,16 +1032,30 @@ export default function App() {
             </div>
           )}
 
-          {/* 2. MIDI LIBRARY */}
+          {/* 2. MIDI LIBRARY & SPECIFIC FILE SELECTION */}
           {activeTab === 'library' && (
             <div className="space-y-5">
               <div className="bg-[#161b24] border border-[#242c3b] rounded-lg p-5">
                 <div className="flex justify-between items-center mb-4">
                   <div>
-                    <h3 className="text-sm font-semibold">Coleção Local de Arquivos MIDI</h3>
-                    <p className="text-xs text-[#8a96a8]">MIDIs analisados e disponíveis para treino e condicionamento.</p>
+                    <h3 className="text-sm font-semibold">Biblioteca & Seleção de MIDIs</h3>
+                    <p className="text-xs text-[#8a96a8]">
+                      Selecione quais músicas farão parte do dataset de treinamento da IA.
+                    </p>
                   </div>
                   <div className="flex gap-2">
+                    <button
+                      onClick={selectAllMidis}
+                      className="px-3 py-1.5 bg-[#10141b] border border-[#242c3b] hover:border-[#00e5ff] rounded text-xs font-medium text-[#00e5ff] transition"
+                    >
+                      Selecionar Todos ({libraryFiles.length})
+                    </button>
+                    <button
+                      onClick={deselectAllMidis}
+                      className="px-3 py-1.5 bg-[#10141b] border border-[#242c3b] hover:border-[#8a96a8] rounded text-xs font-medium text-[#8a96a8] transition"
+                    >
+                      Desmarcar Todos
+                    </button>
                     <button
                       onClick={handleGenerateSynthetic}
                       className="px-3 py-1.5 bg-[#10141b] border border-[#242c3b] hover:border-[#00e5ff] rounded text-xs font-medium text-[#f0f4f8] transition flex items-center gap-1.5"
@@ -766,10 +1071,30 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Selection status badge */}
+                <div className="mb-3 p-3 bg-[#10141b] rounded border border-[#242c3b] flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-[#00e5ff]">{selectedFileNames.length} de {libraryFiles.length}</span>
+                    <span className="text-[#8a96a8]">arquivos MIDI selecionados para o treinamento atual.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-medium">
+                      <input
+                        type="checkbox"
+                        checked={useOnlySelectedMidis}
+                        onChange={(e) => setUseOnlySelectedMidis(e.target.checked)}
+                        className="rounded border-[#242c3b] text-[#00e5ff] focus:ring-0"
+                      />
+                      <span>Treinar estritamente apenas usando os selecionados</span>
+                    </label>
+                  </div>
+                </div>
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs text-left">
                     <thead className="text-[11px] text-[#8a96a8] border-b border-[#242c3b] uppercase">
                       <tr>
+                        <th className="py-2.5 px-3 w-10">Treinar?</th>
                         <th className="py-2.5 px-3">Arquivo</th>
                         <th className="py-2.5 px-3">Duração</th>
                         <th className="py-2.5 px-3">BPM</th>
@@ -781,29 +1106,40 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#242c3b]">
-                      {libraryFiles.map((f) => (
-                        <tr key={f.filename} className="hover:bg-white/[0.02]">
-                          <td className="py-2.5 px-3 font-medium text-[#00e5ff]">{f.filename}</td>
-                          <td className="py-2.5 px-3">{f.duration_sec}s</td>
-                          <td className="py-2.5 px-3">{f.tempo_bpm}</td>
-                          <td className="py-2.5 px-3">{f.track_count}</td>
-                          <td className="py-2.5 px-3">{f.note_count}</td>
-                          <td className="py-2.5 px-3">{f.pitch_range?.[0]} - {f.pitch_range?.[1]}</td>
-                          <td className="py-2.5 px-3">
-                            <span className="text-[10px] bg-[#00e676]/10 text-[#00e676] px-2 py-0.5 rounded border border-[#00e676]/30">
-                              Válido
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <button
-                              onClick={() => inspectFile(f)}
-                              className="px-2.5 py-1 bg-[#10141b] border border-[#242c3b] hover:border-[#00e5ff] rounded text-[11px]"
-                            >
-                              Inspecionar
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {libraryFiles.map((f) => {
+                        const isSelected = selectedFileNames.includes(f.filename);
+                        return (
+                          <tr key={f.filename} className={`hover:bg-white/[0.02] ${isSelected ? 'bg-[#00e5ff]/[0.03]' : ''}`}>
+                            <td className="py-2.5 px-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSelectFile(f.filename)}
+                                className="w-4 h-4 rounded border-[#242c3b] accent-[#00e5ff] cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 font-medium text-[#00e5ff]">{f.filename}</td>
+                            <td className="py-2.5 px-3">{f.duration_sec}s</td>
+                            <td className="py-2.5 px-3">{f.tempo_bpm}</td>
+                            <td className="py-2.5 px-3">{f.track_count}</td>
+                            <td className="py-2.5 px-3">{f.note_count}</td>
+                            <td className="py-2.5 px-3">{f.pitch_range?.[0]} - {f.pitch_range?.[1]}</td>
+                            <td className="py-2.5 px-3">
+                              <span className="text-[10px] bg-[#00e676]/10 text-[#00e676] px-2 py-0.5 rounded border border-[#00e676]/30">
+                                Válido
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <button
+                                onClick={() => inspectFile(f)}
+                                className="px-2.5 py-1 bg-[#10141b] border border-[#242c3b] hover:border-[#00e5ff] rounded text-[11px]"
+                              >
+                                Inspecionar
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -812,7 +1148,7 @@ export default function App() {
                 <div className="mt-6 p-4 bg-[#10141b] border border-[#242c3b] rounded-lg">
                   <div className="flex justify-between items-center mb-3">
                     <div className="text-xs font-semibold">
-                      Piano Roll: <span className="text-[#00e5ff]">{selectedFile?.filename || 'Nenhum selecionado'}</span>
+                      Piano Roll: <span className="text-[#00e5ff]">{inspectedFile?.filename || 'Nenhum selecionado'}</span>
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -849,13 +1185,35 @@ export default function App() {
 
               <div className="space-y-4 text-xs">
                 <div>
+                  <label className="block font-medium mb-1.5">Filtro de Arquivos</label>
+                  <div className="p-3 bg-[#10141b] rounded border border-[#242c3b] flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold text-[#00e5ff]">
+                        {useOnlySelectedMidis ? `${selectedFileNames.length} MIDIs específicos selecionados` : 'Todos os MIDIs da biblioteca'}
+                      </span>
+                      <p className="text-[11px] text-[#8a96a8] mt-0.5">
+                        {useOnlySelectedMidis
+                          ? 'Apenas os arquivos marcados na Biblioteca farão parte das sequências.'
+                          : 'Toda a pasta de datasets será ingerida.'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab('library')}
+                      className="px-3 py-1 bg-[#242c3b] hover:bg-[#2e3747] text-white rounded text-xs"
+                    >
+                      Alterar Seleção
+                    </button>
+                  </div>
+                </div>
+
+                <div>
                   <label className="block font-medium mb-1.5">Modo de Tokenização</label>
                   <select
                     value={prepMode}
                     onChange={(e: any) => setPrepMode(e.target.value)}
                     className="w-full bg-[#0f131a] border border-[#242c3b] rounded px-3 py-2 text-xs focus:border-[#00e5ff] outline-none"
                   >
-                    <option value="remi">REMI (aiMIDI) — Grades Rítmicas, Compassos e Bins de Velocidade</option>
+                    <option value="remi">REMI (aiMIDI) — Compassos, Posições Métricas e Bins</option>
                     <option value="theremin">Theremin BPE — Serialização Textual & Byte Pair Encoding</option>
                   </select>
                 </div>
@@ -870,7 +1228,7 @@ export default function App() {
                     <option value={64}>64 tokens (Ultraleve para teste rápido)</option>
                     <option value={128}>128 tokens (Recomendado para CPU)</option>
                     <option value={256}>256 tokens (Equilibrado)</option>
-                    <option value={512}>512 tokens (Contexto Longo)</option>
+                    <option value={512}>512 tokens (Contexto Longo / Potência Máxima)</option>
                   </select>
                 </div>
 
@@ -926,151 +1284,731 @@ export default function App() {
 
           {/* 4. TRAINING LAB */}
           {activeTab === 'training' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Config Panel */}
-              <div className="bg-[#161b24] border border-[#242c3b] rounded-lg p-5 space-y-4 text-xs">
-                <h3 className="text-sm font-semibold">Parâmetros do Modelo & Treinador</h3>
+            <div className="space-y-6">
+              {/* TOP HERO: REAL-TIME TELEMETRY & PROGRESS HUD */}
+              <div className={`border rounded-xl p-5.5 transition-all duration-300 shadow-xl ${
+                activePreset === 'max_power' && (trainProgress.status === 'running' || trainProgress.status === 'paused')
+                  ? 'bg-gradient-to-b from-[#1b1016] via-[#12151d] to-[#10141b] border-[#ff3366]/60 shadow-[0_0_30px_rgba(255,51,102,0.25)]'
+                  : trainProgress.status === 'running'
+                  ? 'bg-gradient-to-b from-[#101d24] via-[#111822] to-[#10141b] border-[#00e5ff]/50 shadow-[0_0_25px_rgba(0,229,255,0.15)]'
+                  : trainProgress.status === 'completed'
+                  ? 'bg-gradient-to-b from-[#0e2118] via-[#101918] to-[#10141b] border-[#00e676]/40'
+                  : 'bg-[#161b24] border-[#242c3b]'
+              }`}>
+                {/* Header status row */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[#242c3b]/70">
+                  <div className="flex items-center gap-3">
+                    {activePreset === 'max_power' ? (
+                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#ff0055] to-[#ff9900] text-white flex items-center justify-center shadow-[0_0_15px_rgba(255,0,85,0.5)]">
+                        <Flame className="w-5 h-5 fill-current animate-bounce" />
+                      </div>
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-[#00e5ff]/10 text-[#00e5ff] flex items-center justify-center border border-[#00e5ff]/30">
+                        <Activity className="w-5 h-5" />
+                      </div>
+                    )}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-base font-extrabold tracking-wide">
+                          Painel de Progresso & Telemetria em Tempo Real
+                        </h2>
+                        {activePreset === 'max_power' && (
+                          <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-[#ff0055]/20 text-[#ff3366] border border-[#ff3366]/40 animate-pulse">
+                            🔥 MODO POTÊNCIA MÁXIMA
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-[#8a96a8]">
+                        Acompanhe cada época, passo de gradiente, descida de loss e velocidade de cálculo ao vivo.
+                      </p>
+                    </div>
+                  </div>
 
-                <div className="flex gap-2 mb-2">
-                  <button
-                    onClick={() => { setTrainLayers(2); setTrainHeads(4); setTrainEmbd(64); setTrainBatch(4); }}
-                    className="px-2.5 py-1 rounded bg-[#10141b] border border-[#242c3b] hover:border-[#00e5ff] text-[11px]"
-                  >
-                    Preset: CPU Conservador
-                  </button>
-                  <button
-                    onClick={() => { setTrainLayers(4); setTrainHeads(4); setTrainEmbd(128); setTrainBatch(8); }}
-                    className="px-2.5 py-1 rounded bg-[#10141b] border border-[#242c3b] hover:border-[#00e5ff] text-[11px]"
-                  >
-                    Preset: Equilibrado
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <span className={`text-xs uppercase font-extrabold px-3 py-1 rounded-full border flex items-center gap-2 ${
+                      trainProgress.status === 'running'
+                        ? 'bg-[#00e5ff]/15 text-[#00e5ff] border-[#00e5ff]/50 animate-pulse'
+                        : trainProgress.status === 'paused'
+                        ? 'bg-[#ff9100]/20 text-[#ff9100] border-[#ff9100]/50'
+                        : trainProgress.status === 'completed'
+                        ? 'bg-[#00e676]/20 text-[#00e676] border-[#00e676]/50'
+                        : 'bg-[#242c3b] text-[#8a96a8] border-[#364256]'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${
+                        trainProgress.status === 'running'
+                          ? 'bg-[#00e5ff] animate-ping'
+                          : trainProgress.status === 'paused'
+                          ? 'bg-[#ff9100]'
+                          : trainProgress.status === 'completed'
+                          ? 'bg-[#00e676]'
+                          : 'bg-[#5a6473]'
+                      }`} />
+                      {trainProgress.status === 'running' && 'Treinamento Ativo'}
+                      {trainProgress.status === 'paused' && 'Treinamento Pausado'}
+                      {trainProgress.status === 'completed' && 'Treinamento Concluído'}
+                      {trainProgress.status === 'idle' && 'Pronto para Iniciar'}
+                      {trainProgress.status === 'stopped' && 'Interrompido'}
+                      {trainProgress.status === 'error' && 'Erro no Treino'}
+                    </span>
+
+                    {/* Quick controls inside header */}
+                    {trainProgress.status === 'running' && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => fetch('/api/training/pause', { method: 'POST' })}
+                          className="px-2.5 py-1 bg-[#10141b] border border-[#242c3b] hover:border-[#ff9100] text-[#ff9100] rounded text-xs flex items-center gap-1 transition"
+                          title="Pausar Treino"
+                        >
+                          <Pause className="w-3.5 h-3.5" /> Pausar
+                        </button>
+                        <button
+                          onClick={() => fetch('/api/training/stop', { method: 'POST' })}
+                          className="px-2.5 py-1 bg-red-950/40 border border-red-800 hover:bg-red-900/60 text-red-400 rounded text-xs flex items-center gap-1 transition"
+                          title="Parar e Salvar Checkpoint"
+                        >
+                          <Square className="w-3.5 h-3.5 fill-current" /> Parar
+                        </button>
+                      </div>
+                    )}
+                    {trainProgress.status === 'paused' && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => fetch('/api/training/resume', { method: 'POST' })}
+                          className="px-3 py-1 bg-[#00e676] text-black font-bold rounded text-xs flex items-center gap-1 hover:bg-[#33ff88] transition"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" /> Retomar
+                        </button>
+                        <button
+                          onClick={() => fetch('/api/training/stop', { method: 'POST' })}
+                          className="px-2.5 py-1 bg-red-950/40 border border-red-800 text-red-400 rounded text-xs hover:bg-red-900 transition"
+                        >
+                          <Square className="w-3.5 h-3.5 fill-current" /> Parar
+                        </button>
+                      </div>
+                    )}
+                    {trainProgress.status === 'completed' && (
+                      <button
+                        onClick={() => setActiveTab('generation')}
+                        className="px-3 py-1 bg-[#00e676] text-black font-bold rounded text-xs flex items-center gap-1.5 hover:bg-[#33ff88] transition shadow-lg"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-current" /> Compor com este Modelo
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[#8a96a8] mb-1">Nome do Modelo</label>
-                    <input
-                      type="text"
-                      value={trainModelName}
-                      onChange={(e) => setTrainModelName(e.target.value)}
-                      className="w-full bg-[#0f131a] border border-[#242c3b] rounded px-3 py-1.5 focus:border-[#00e5ff] outline-none"
-                    />
+                {/* Main Progress Metric Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3 py-4">
+                  {/* Metric 1: Overall percentage hero */}
+                  <div className="col-span-2 md:col-span-2 p-3.5 bg-[#0d1017] rounded-lg border border-[#242c3b] flex items-center justify-between relative overflow-hidden">
+                    <div>
+                      <span className="text-[11px] text-[#8a96a8] font-medium block">Progresso Geral do Treinamento</span>
+                      <div className="flex items-baseline gap-2 mt-1">
+                        <span className={`text-3xl font-extrabold font-mono tracking-tight ${
+                          activePreset === 'max_power' ? 'text-transparent bg-clip-text bg-gradient-to-r from-[#ff0055] to-[#ff9900]' : 'text-[#00e5ff]'
+                        }`}>
+                          {trainProgress.overall_progress_pct || 0}%
+                        </span>
+                        <span className="text-xs text-[#8a96a8] font-mono">
+                          Passo {trainProgress.current_step} / {trainProgress.total_steps || 1}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-[#5a6473] mt-0.5 font-medium">
+                        {trainProgress.status === 'running'
+                          ? 'Calculando tensores e pesos neurais...'
+                          : trainProgress.status === 'completed'
+                          ? '100% Finalizado • Checkpoints salvos'
+                          : 'Aguardando início do loop'}
+                      </div>
+                    </div>
+                    <div className="w-14 h-14 rounded-full border-4 border-[#242c3b] flex items-center justify-center relative shrink-0">
+                      <div
+                        className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#00e5ff] border-r-[#00e676] animate-spin"
+                        style={{
+                          display: trainProgress.status === 'running' ? 'block' : 'none',
+                          animationDuration: '2s',
+                        }}
+                      />
+                      <Gauge className={`w-6 h-6 ${activePreset === 'max_power' ? 'text-[#ff9900]' : 'text-[#00e5ff]'}`} />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[#8a96a8] mb-1">Épocas</label>
-                    <input
-                      type="number"
-                      value={trainEpochs}
-                      onChange={(e) => setTrainEpochs(parseInt(e.target.value))}
-                      className="w-full bg-[#0f131a] border border-[#242c3b] rounded px-3 py-1.5 focus:border-[#00e5ff] outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[#8a96a8] mb-1">Batch Size</label>
-                    <input
-                      type="number"
-                      value={trainBatch}
-                      onChange={(e) => setTrainBatch(parseInt(e.target.value))}
-                      className="w-full bg-[#0f131a] border border-[#242c3b] rounded px-3 py-1.5 focus:border-[#00e5ff] outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[#8a96a8] mb-1">Learning Rate</label>
-                    <input
-                      type="number"
-                      step="0.0001"
-                      value={trainLr}
-                      onChange={(e) => setTrainLr(parseFloat(e.target.value))}
-                      className="w-full bg-[#0f131a] border border-[#242c3b] rounded px-3 py-1.5 focus:border-[#00e5ff] outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[#8a96a8] mb-1">Camadas (Layers)</label>
-                    <input
-                      type="number"
-                      value={trainLayers}
-                      onChange={(e) => setTrainLayers(parseInt(e.target.value))}
-                      className="w-full bg-[#0f131a] border border-[#242c3b] rounded px-3 py-1.5 focus:border-[#00e5ff] outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[#8a96a8] mb-1">Cabeças (Heads)</label>
-                    <input
-                      type="number"
-                      value={trainHeads}
-                      onChange={(e) => setTrainHeads(parseInt(e.target.value))}
-                      className="w-full bg-[#0f131a] border border-[#242c3b] rounded px-3 py-1.5 focus:border-[#00e5ff] outline-none"
-                    />
-                  </div>
-                </div>
 
-                <div className="flex gap-2 pt-2">
-                  <button
-                    onClick={handleStartTraining}
-                    disabled={trainProgress.status === 'running'}
-                    className="px-4 py-2 bg-[#00e5ff] text-black font-bold rounded text-xs hover:bg-[#33ebff] transition flex items-center gap-1.5 disabled:opacity-40"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    Iniciar Treinamento
-                  </button>
-                  <button
-                    onClick={() => fetch('/api/training/pause', { method: 'POST' })}
-                    disabled={trainProgress.status !== 'running'}
-                    className="px-3 py-2 bg-[#10141b] border border-[#242c3b] rounded text-xs hover:border-[#00e5ff] disabled:opacity-40"
-                  >
-                    <Pause className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => fetch('/api/training/stop', { method: 'POST' })}
-                    disabled={trainProgress.status !== 'running' && trainProgress.status !== 'paused'}
-                    className="px-3 py-2 bg-red-950/40 border border-red-800 text-red-400 rounded text-xs hover:bg-red-900/40 disabled:opacity-40"
-                  >
-                    <Square className="w-3.5 h-3.5 fill-current" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Real-time Monitor Panel */}
-              <div className="bg-[#161b24] border border-[#242c3b] rounded-lg p-5 flex flex-col justify-between">
-                <div>
-                  <div className="flex justify-between items-center mb-3">
-                    <h3 className="text-sm font-semibold">Monitor em Tempo Real</h3>
-                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-[#00e5ff]/20 text-[#00e5ff] border border-[#00e5ff]/30">
-                      {trainProgress.status}
+                  {/* Metric 2: Época Atual */}
+                  <div className="p-3 bg-[#0d1017] rounded-lg border border-[#242c3b]">
+                    <span className="text-[10px] text-[#8a96a8] block uppercase tracking-wider">Época Atual</span>
+                    <div className="text-xl font-mono font-bold text-[#00e5ff] mt-1">
+                      {trainProgress.status === 'running' || trainProgress.status === 'paused'
+                        ? `${trainProgress.current_epoch + 1} / ${trainProgress.total_epochs}`
+                        : trainProgress.status === 'completed'
+                        ? `${trainProgress.total_epochs} / ${trainProgress.total_epochs}`
+                        : `0 / ${trainEpochs}`}
+                    </div>
+                    <span className="text-[10px] text-[#8a96a8] mt-0.5 block">
+                      Passo {trainProgress.step_in_epoch || 0} / {trainProgress.steps_per_epoch || 1}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-center text-xs mb-4">
-                    <div className="p-2.5 bg-[#10141b] rounded border border-[#242c3b]">
-                      <span className="text-[10px] text-[#8a96a8] block">Época</span>
-                      <span className="font-mono font-bold text-sm">{trainProgress.current_epoch + 1} / {trainProgress.total_epochs}</span>
+                  {/* Metric 3: Train Loss */}
+                  <div className="p-3 bg-[#0d1017] rounded-lg border border-[#242c3b]">
+                    <span className="text-[10px] text-[#8a96a8] block uppercase tracking-wider">Train Loss Atual</span>
+                    <div className="text-xl font-mono font-bold text-[#00e5ff] mt-1 flex items-center gap-1.5">
+                      {(trainProgress.current_train_loss || 0).toFixed(4)}
                     </div>
-                    <div className="p-2.5 bg-[#10141b] rounded border border-[#242c3b]">
-                      <span className="text-[10px] text-[#8a96a8] block">Train Loss</span>
-                      <span className="font-mono font-bold text-sm text-[#00e5ff]">{(trainProgress.current_train_loss || 0).toFixed(4)}</span>
+                    <span className="text-[10px] text-[#00e676] font-mono mt-0.5 block">
+                      Val: {(trainProgress.current_val_loss || 0).toFixed(4)}
+                    </span>
+                  </div>
+
+                  {/* Metric 4: Velocidade */}
+                  <div className="p-3 bg-[#0d1017] rounded-lg border border-[#242c3b]">
+                    <span className="text-[10px] text-[#8a96a8] block uppercase tracking-wider">Velocidade</span>
+                    <div className="text-xl font-mono font-bold text-[#00e676] mt-1">
+                      {trainProgress.steps_per_sec || 0} <span className="text-xs font-normal">it/s</span>
                     </div>
-                    <div className="p-2.5 bg-[#10141b] rounded border border-[#242c3b]">
-                      <span className="text-[10px] text-[#8a96a8] block">Val Loss</span>
-                      <span className="font-mono font-bold text-sm text-[#ff9100]">{(trainProgress.current_val_loss || 0).toFixed(4)}</span>
+                    <span className="text-[10px] text-[#8a96a8] font-mono mt-0.5 block">
+                      LR: {(trainProgress.learning_rate || 0.0005).toFixed(6)}
+                    </span>
+                  </div>
+
+                  {/* Metric 5: ETA Restante */}
+                  <div className="p-3 bg-[#0d1017] rounded-lg border border-[#242c3b]">
+                    <span className="text-[10px] text-[#8a96a8] block uppercase tracking-wider">Tempo Restante (ETA)</span>
+                    <div className="text-xl font-mono font-bold text-[#ff9100] mt-1">
+                      {trainProgress.remaining_sec > 0
+                        ? `${Math.floor(trainProgress.remaining_sec / 60)}m ${Math.floor(trainProgress.remaining_sec % 60)}s`
+                        : trainProgress.status === 'completed'
+                        ? '00m 00s'
+                        : '--:--'}
+                    </div>
+                    <span className="text-[10px] text-[#8a96a8] font-mono mt-0.5 block">
+                      Decorrido: {Math.floor((trainProgress.elapsed_sec || 0) / 60)}m {Math.floor((trainProgress.elapsed_sec || 0) % 60)}s
+                    </span>
+                  </div>
+                </div>
+
+                {/* Dual Progress Bars */}
+                <div className="space-y-3 pt-1 pb-4">
+                  {/* Bar 1: Step within Epoch */}
+                  <div>
+                    <div className="flex justify-between text-[11px] text-[#8a96a8] mb-1">
+                      <span className="flex items-center gap-1.5">
+                        <Activity className="w-3.5 h-3.5 text-[#00e5ff]" />
+                        Passo da Época Atual
+                      </span>
+                      <span className="font-mono text-[#00e5ff] font-bold">
+                        {trainProgress.step_in_epoch || 0} de {trainProgress.steps_per_epoch || 1} passos ({trainProgress.epoch_progress_pct || 0}%)
+                      </span>
+                    </div>
+                    <div className="w-full h-2.5 bg-[#090b10] rounded-full overflow-hidden border border-[#242c3b]">
+                      <div
+                        className="h-full bg-[#00e5ff] transition-all duration-200 shadow-[0_0_8px_#00e5ff]"
+                        style={{ width: `${trainProgress.epoch_progress_pct || 0}%` }}
+                      />
                     </div>
                   </div>
 
-                  <div className="space-y-1 mb-4">
-                    <div className="flex justify-between text-[11px] text-[#8a96a8]">
-                      <span>Progresso Geral</span>
-                      <span>{trainProgress.overall_progress_pct || 0}%</span>
+                  {/* Bar 2: Overall Total Progress */}
+                  <div>
+                    <div className="flex justify-between text-[11px] text-[#8a96a8] mb-1">
+                      <span className="flex items-center gap-1.5">
+                        {activePreset === 'max_power' ? (
+                          <Flame className="w-3.5 h-3.5 text-[#ff0055] animate-bounce" />
+                        ) : (
+                          <Zap className="w-3.5 h-3.5 text-[#00e676]" />
+                        )}
+                        <span className="font-semibold text-[#f0f4f8]">Progresso Geral do Modelo GPT</span>
+                        {useOnlySelectedMidis && (
+                          <span className="text-[10px] text-[#00e5ff] bg-[#00e5ff]/10 px-2 py-0.5 rounded border border-[#00e5ff]/30">
+                            🎯 {selectedFileNames.length} MIDIs específicos
+                          </span>
+                        )}
+                      </span>
+                      <span className="font-mono text-[#00e676] font-bold text-xs">
+                        {trainProgress.current_step} / {trainProgress.total_steps || 1} passos globais ({trainProgress.overall_progress_pct || 0}%)
+                      </span>
                     </div>
-                    <div className="w-full h-2 bg-[#10141b] rounded overflow-hidden">
+                    <div className="w-full h-3.5 bg-[#090b10] rounded-full overflow-hidden border border-[#242c3b] p-0.5">
                       <div
-                        className="h-full bg-gradient-to-r from-[#00e5ff] to-[#00e676] transition-all"
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          activePreset === 'max_power'
+                            ? 'bg-gradient-to-r from-[#ff0055] via-[#ff9900] to-[#ffcc00] shadow-[0_0_12px_rgba(255,0,85,0.6)]'
+                            : 'bg-gradient-to-r from-[#00e5ff] via-[#00e676] to-[#ff9100]'
+                        }`}
                         style={{ width: `${trainProgress.overall_progress_pct || 0}%` }}
                       />
                     </div>
                   </div>
                 </div>
 
-                <div className="p-2 bg-[#10141b] rounded border border-[#242c3b]">
-                  <canvas ref={lossCanvasRef} width={500} height={180} className="w-full h-44 bg-[#0f141d] rounded" />
+                {/* Split Visuals: Live Loss Curve + Terminal Stream */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
+                  {/* Dynamic Loss Canvas */}
+                  <div className="p-3 bg-[#0a0d14] rounded-lg border border-[#242c3b] flex flex-col justify-between">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs font-semibold text-[#f0f4f8] flex items-center gap-1.5">
+                        <Activity className="w-3.5 h-3.5 text-[#00e5ff]" />
+                        Curva de Perda (Loss Convergence Chart)
+                      </span>
+                      <span className="text-[10px] font-mono text-[#8a96a8]">
+                        Pontos registrados: {trainProgress.loss_history?.length || 0}
+                      </span>
+                    </div>
+                    <canvas
+                      ref={lossCanvasRef}
+                      width={520}
+                      height={180}
+                      className="w-full h-44 bg-[#080b11] rounded border border-[#1b2230]"
+                    />
+                  </div>
+
+                  {/* Live Terminal Stream Window */}
+                  <div className="p-3 bg-[#0a0d14] rounded-lg border border-[#242c3b] flex flex-col justify-between">
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-[#f0f4f8]">
+                        <Terminal className="w-3.5 h-3.5 text-[#00e5ff]" />
+                        Console Stream em Tempo Real
+                      </div>
+                      <div className="flex items-center gap-3 text-xs">
+                        <label className="flex items-center gap-1 text-[11px] text-[#8a96a8] cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={autoScrollLogs}
+                            onChange={(e) => setAutoScrollLogs(e.target.checked)}
+                            className="rounded accent-[#00e5ff]"
+                          />
+                          Auto-scroll
+                        </label>
+                        <button
+                          onClick={() => {
+                            const text = (trainProgress.logs || []).join('\n');
+                            navigator.clipboard.writeText(text);
+                          }}
+                          className="px-2 py-0.5 bg-[#161b24] border border-[#242c3b] text-[#8a96a8] hover:text-[#f0f4f8] rounded text-[10px]"
+                        >
+                          Copiar Logs
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      ref={terminalRef}
+                      className="bg-[#05070a] border border-[#161d27] rounded p-2.5 font-mono text-[10px] h-44 overflow-y-auto space-y-1 text-[#8a96a8]"
+                    >
+                      {(!trainProgress.logs || trainProgress.logs.length === 0) ? (
+                        <div className="text-[#5a6473] italic">
+                          Aguardando início do treinamento. Escolha um preset abaixo e clique em "Iniciar Treinamento".
+                        </div>
+                      ) : (
+                        trainProgress.logs.map((line, idx) => {
+                          const isPower = line.includes('[POTÊNCIA MÁXIMA]');
+                          const isCheckpoint = line.includes('[CHECKPOINT]');
+                          const isSuccess = line.includes('[FINALIZADO]') || line.includes('[SUCESSO]');
+                          const isConfig = line.includes('[CONFIG]') || line.includes('[INÍCIO]') || line.includes('[PRESET]');
+                          const isSpecific = line.includes('[DATASET ESPECÍFICO]');
+                          return (
+                            <div
+                              key={idx}
+                              className={`${
+                                isPower
+                                  ? 'text-[#ff3366] font-bold'
+                                  : isCheckpoint
+                                  ? 'text-[#ff9100] font-bold'
+                                  : isSuccess
+                                  ? 'text-[#00e676] font-bold'
+                                  : isSpecific
+                                  ? 'text-[#00e5ff] font-bold'
+                                  : isConfig
+                                  ? 'text-[#00e5ff]'
+                                  : 'text-[#9bb0cb]'
+                              }`}
+                            >
+                              {line}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* LOWER ROW: PRESETS (LEFT) & SPECIFIC MIDIS SELECTION (RIGHT) */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* COLUMN 1: TRAINING PRESETS & MAXIMUM POWER */}
+                <div className="bg-[#161b24] border border-[#242c3b] rounded-xl p-5 text-xs space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-sm font-bold flex items-center gap-2">
+                        <Gauge className="w-4 h-4 text-[#00e5ff]" />
+                        Presets de Treinamento & Intensidade
+                      </h3>
+                      <p className="text-[#8a96a8] text-[11px] mt-0.5">
+                        Defina o quanto a IA vai treinar ou libere a potência máxima de cálculo.
+                      </p>
+                    </div>
+                    <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-[#10141b] border border-[#242c3b] text-[#00e5ff]">
+                      {trainEpochs} Épocas ({trainIntensity}%)
+                    </span>
+                  </div>
+
+                  {/* 4 Presets Cards */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Preset 1: Fast */}
+                    <button
+                      onClick={() => applyPreset('fast')}
+                      className={`p-3 rounded-lg border text-left transition flex flex-col justify-between ${
+                        activePreset === 'fast'
+                          ? 'bg-[#00e5ff]/15 border-[#00e5ff] text-[#f0f4f8]'
+                          : 'bg-[#10141b] border-[#242c3b] text-[#8a96a8] hover:border-[#00e5ff]/50'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5 font-bold text-xs text-[#00e5ff]">
+                          <Zap className="w-3.5 h-3.5" /> 1. Leve / Rápido
+                        </div>
+                        <div className="text-[11px] mt-1 text-[#8a96a8]">
+                          5 Épocas • 2 Camadas • ~15 seg
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-[#5a6473] mt-2">Validação rápida imediata.</div>
+                    </button>
+
+                    {/* Preset 2: Balanced */}
+                    <button
+                      onClick={() => applyPreset('balanced')}
+                      className={`p-3 rounded-lg border text-left transition flex flex-col justify-between ${
+                        activePreset === 'balanced'
+                          ? 'bg-[#00e676]/15 border-[#00e676] text-[#f0f4f8]'
+                          : 'bg-[#10141b] border-[#242c3b] text-[#8a96a8] hover:border-[#00e676]/50'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5 font-bold text-xs text-[#00e676]">
+                          <Activity className="w-3.5 h-3.5" /> 2. Equilibrado
+                        </div>
+                        <div className="text-[11px] mt-1 text-[#8a96a8]">
+                          15 Épocas • 4 Camadas • ~1-2 min
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-[#5a6473] mt-2">Padrão de estúdio musical.</div>
+                    </button>
+
+                    {/* Preset 3: Deep */}
+                    <button
+                      onClick={() => applyPreset('deep')}
+                      className={`p-3 rounded-lg border text-left transition flex flex-col justify-between ${
+                        activePreset === 'deep'
+                          ? 'bg-[#ff9100]/15 border-[#ff9100] text-[#f0f4f8]'
+                          : 'bg-[#10141b] border-[#242c3b] text-[#8a96a8] hover:border-[#ff9100]/50'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5 font-bold text-xs text-[#ff9100]">
+                          <Cpu className="w-3.5 h-3.5" /> 3. Treino Profundo
+                        </div>
+                        <div className="text-[11px] mt-1 text-[#8a96a8]">
+                          35 Épocas • 6 Camadas • ~3-5 min
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-[#5a6473] mt-2">Polifonia e harmonia rica.</div>
+                    </button>
+
+                    {/* Preset 4: POTÊNCIA MÁXIMA */}
+                    <button
+                      onClick={() => applyPreset('max_power')}
+                      className={`p-3 rounded-lg border text-left transition flex flex-col justify-between relative overflow-hidden ${
+                        activePreset === 'max_power'
+                          ? 'bg-gradient-to-br from-[#ff0055]/25 via-[#ff5500]/20 to-[#ff9900]/20 border-[#ff3366] text-[#f0f4f8] shadow-[0_0_20px_rgba(255,0,85,0.4)]'
+                          : 'bg-[#10141b] border-[#242c3b] text-[#8a96a8] hover:border-[#ff3366]/50'
+                      }`}
+                    >
+                      <div className="absolute top-1 right-2 text-[8px] font-black uppercase text-[#ff0055] tracking-widest">
+                        OVERDRIVE
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5 font-black text-xs text-[#ff3366]">
+                          <Flame className="w-3.5 h-3.5 fill-current animate-bounce text-[#ff9900]" /> 4. POTÊNCIA MÁXIMA
+                        </div>
+                        <div className="text-[11px] mt-1 text-[#f0f4f8] font-bold">
+                          75 Épocas • 8 Camadas • 384 Dim
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-[#ff9900] mt-2 font-medium">
+                        Máximo poder de cálculo CPU/GPU!
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Slider de Intensidade Dinâmica */}
+                  <div className="p-3 bg-[#10141b] rounded-lg border border-[#242c3b]">
+                    <div className="flex justify-between text-xs text-[#8a96a8] mb-1.5">
+                      <span className="font-medium text-[#f0f4f8]">Slider de Esforço / Intensidade do Treino</span>
+                      <span className="font-mono text-[#00e5ff] font-bold">{trainIntensity}% ({trainEpochs} Épocas)</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="5"
+                      max="100"
+                      value={trainIntensity}
+                      onChange={(e) => handleIntensitySlider(parseInt(e.target.value))}
+                      className="w-full accent-[#00e5ff] cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-[#5a6473] mt-1">
+                      <span>Leve (5 ép.)</span>
+                      <span>Médio (15 ép.)</span>
+                      <span>Profundo (35 ép.)</span>
+                      <span className="text-[#ff3366] font-bold">Potência Máxima (75+ ép.)</span>
+                    </div>
+                  </div>
+
+                  {/* Toggle Parâmetros Avançados */}
+                  <div>
+                    <button
+                      onClick={() => setShowAdvancedTrainParams(!showAdvancedTrainParams)}
+                      className="text-[11px] text-[#00e5ff] hover:underline flex items-center gap-1 font-semibold"
+                    >
+                      <Sliders className="w-3.5 h-3.5" />
+                      {showAdvancedTrainParams ? 'Ocultar Parâmetros Avançados' : 'Ajustar Parâmetros Avançados (Camadas, Batch, LR, Contexto)'}
+                    </button>
+
+                    {showAdvancedTrainParams && (
+                      <div className="grid grid-cols-3 gap-2.5 mt-2.5 p-3 bg-[#10141b] rounded border border-[#242c3b]">
+                        <div>
+                          <label className="block text-[#8a96a8] text-[10px] mb-1">Épocas Manuais</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="200"
+                            value={trainEpochs}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value) || 1;
+                              setTrainEpochs(v);
+                              setActivePreset('custom');
+                            }}
+                            className="w-full bg-[#090b10] border border-[#242c3b] rounded px-2.5 py-1 text-xs text-[#00e5ff] font-mono focus:border-[#00e5ff] outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[#8a96a8] text-[10px] mb-1">Batch Size</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="64"
+                            value={trainBatch}
+                            onChange={(e) => setTrainBatch(parseInt(e.target.value) || 4)}
+                            className="w-full bg-[#090b10] border border-[#242c3b] rounded px-2.5 py-1 text-xs text-[#00e5ff] font-mono focus:border-[#00e5ff] outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[#8a96a8] text-[10px] mb-1">Learning Rate</label>
+                          <input
+                            type="number"
+                            step="0.0001"
+                            value={trainLr}
+                            onChange={(e) => setTrainLr(parseFloat(e.target.value) || 0.0005)}
+                            className="w-full bg-[#090b10] border border-[#242c3b] rounded px-2.5 py-1 text-xs text-[#00e5ff] font-mono focus:border-[#00e5ff] outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[#8a96a8] text-[10px] mb-1">Camadas (Layers)</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="12"
+                            value={trainLayers}
+                            onChange={(e) => setTrainLayers(parseInt(e.target.value) || 4)}
+                            className="w-full bg-[#090b10] border border-[#242c3b] rounded px-2.5 py-1 text-xs text-[#00e5ff] font-mono focus:border-[#00e5ff] outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[#8a96a8] text-[10px] mb-1">Dimensão Embed</label>
+                          <input
+                            type="number"
+                            step="32"
+                            min="32"
+                            max="512"
+                            value={trainEmbd}
+                            onChange={(e) => setTrainEmbd(parseInt(e.target.value) || 128)}
+                            className="w-full bg-[#090b10] border border-[#242c3b] rounded px-2.5 py-1 text-xs text-[#00e5ff] font-mono focus:border-[#00e5ff] outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[#8a96a8] text-[10px] mb-1">Janela Contexto</label>
+                          <input
+                            type="number"
+                            step="64"
+                            min="32"
+                            max="512"
+                            value={trainSeqLen}
+                            onChange={(e) => setTrainSeqLen(parseInt(e.target.value) || 128)}
+                            className="w-full bg-[#090b10] border border-[#242c3b] rounded px-2.5 py-1 text-xs text-[#00e5ff] font-mono focus:border-[#00e5ff] outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Nome do modelo & Botão Iniciar */}
+                  <div>
+                    <label className="block text-[#8a96a8] mb-1">Identificador do Modelo</label>
+                    <input
+                      type="text"
+                      value={trainModelName}
+                      onChange={(e) => setTrainModelName(e.target.value)}
+                      className="w-full bg-[#10141b] border border-[#242c3b] rounded px-3 py-2 text-xs font-mono focus:border-[#00e5ff] outline-none mb-3"
+                    />
+
+                    <button
+                      onClick={handleStartTraining}
+                      disabled={trainProgress.status === 'running'}
+                      className={`w-full py-3.5 font-black rounded-lg text-xs tracking-wide transition flex items-center justify-center gap-2 shadow-xl disabled:opacity-40 ${
+                        activePreset === 'max_power'
+                          ? 'bg-gradient-to-r from-[#ff0055] via-[#ff5500] to-[#ff9900] text-white hover:brightness-110 shadow-[0_0_20px_rgba(255,0,85,0.45)]'
+                          : 'bg-[#00e5ff] text-black hover:bg-[#33ebff]'
+                      }`}
+                    >
+                      {activePreset === 'max_power' ? (
+                        <>
+                          <Flame className="w-4 h-4 fill-current animate-bounce text-yellow-300" />
+                          INICIAR TREINAMENTO EM POTÊNCIA MÁXIMA ({trainEpochs} ÉPOCAS)
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4 h-4 fill-current" />
+                          Iniciar Treinamento ({trainEpochs} Épocas)
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* COLUMN 2: SPECIFIC MIDIS SELECTION */}
+                <div className="bg-[#161b24] border border-[#242c3b] rounded-xl p-5 text-xs space-y-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <h3 className="text-sm font-bold flex items-center gap-2">
+                        <CheckSquare className="w-4 h-4 text-[#00e5ff]" />
+                        Treinar Só Usando MIDIs Específicos
+                      </h3>
+                      <button
+                        onClick={() => setUseOnlySelectedMidis(!useOnlySelectedMidis)}
+                        className={`px-3 py-1 rounded-full text-[11px] font-extrabold transition shadow ${
+                          useOnlySelectedMidis
+                            ? 'bg-[#00e5ff] text-black shadow-[0_0_10px_rgba(0,229,255,0.4)]'
+                            : 'bg-[#10141b] border border-[#242c3b] text-[#8a96a8]'
+                        }`}
+                      >
+                        {useOnlySelectedMidis ? '✓ Modo Seleção Ativo' : 'Usar Toda a Biblioteca'}
+                      </button>
+                    </div>
+
+                    <p className="text-[#8a96a8] text-[11px] mb-3">
+                      {useOnlySelectedMidis
+                        ? `A rede neural treinará EXCLUSIVAMENTE nas ${selectedFileNames.length} músicas marcadas abaixo.`
+                        : `O treinamento incluirá todas as ${libraryFiles.length} músicas disponíveis na biblioteca.`}
+                    </p>
+
+                    {/* Search & batch actions */}
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        type="text"
+                        placeholder="Filtrar músicas por nome..."
+                        value={midiSearchQuery}
+                        onChange={(e) => setMidiSearchQuery(e.target.value)}
+                        className="flex-1 bg-[#10141b] border border-[#242c3b] rounded px-3 py-1.5 text-xs focus:border-[#00e5ff] outline-none"
+                      />
+                      <button
+                        onClick={selectAllMidis}
+                        className="px-2.5 py-1 bg-[#10141b] border border-[#242c3b] hover:border-[#00e5ff] text-[#8a96a8] hover:text-[#f0f4f8] rounded text-[10px] font-semibold"
+                      >
+                        Marcar Todos
+                      </button>
+                      <button
+                        onClick={deselectAllMidis}
+                        className="px-2.5 py-1 bg-[#10141b] border border-[#242c3b] hover:border-red-500 text-[#8a96a8] hover:text-red-400 rounded text-[10px] font-semibold"
+                      >
+                        Desmarcar Todos
+                      </button>
+                    </div>
+
+                    {/* MIDI Files Checklist with Audio Preview Button */}
+                    <div className="max-h-64 overflow-y-auto space-y-1.5 p-2 bg-[#0d1017] rounded-lg border border-[#242c3b]">
+                      {libraryFiles
+                        .filter((f) => !midiSearchQuery || f.filename.toLowerCase().includes(midiSearchQuery.toLowerCase()))
+                        .map((f) => {
+                          const isSel = selectedFileNames.includes(f.filename);
+                          const isPlayingThis = activeAudioFilename === f.filename && isPlayingAudio;
+                          return (
+                            <div
+                              key={f.filename}
+                              className={`p-2.5 rounded-md flex items-center justify-between transition border ${
+                                isSel
+                                  ? 'bg-[#00e5ff]/10 border-[#00e5ff]/40 text-[#f0f4f8]'
+                                  : 'bg-[#10141b] border-transparent text-[#8a96a8] opacity-60 hover:opacity-100'
+                              }`}
+                            >
+                              <div
+                                onClick={() => toggleSelectFile(f.filename)}
+                                className="flex items-center gap-2.5 truncate flex-1 cursor-pointer"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSel}
+                                  onChange={() => {}}
+                                  className="accent-[#00e5ff] cursor-pointer"
+                                />
+                                <span className="font-semibold truncate text-xs">{f.filename}</span>
+                              </div>
+
+                              <div className="flex items-center gap-3 shrink-0 ml-2">
+                                <span className="text-[10px] font-mono text-[#8a96a8]">
+                                  {f.note_count} notas • {f.tempo_bpm} BPM
+                                </span>
+                                <button
+                                  onClick={() => playFileByName(f.filename)}
+                                  className={`p-1 rounded text-[10px] transition flex items-center gap-1 ${
+                                    isPlayingThis
+                                      ? 'bg-[#ff9100] text-black font-bold'
+                                      : 'bg-[#161b24] hover:bg-[#00e5ff]/20 text-[#00e5ff] border border-[#242c3b]'
+                                  }`}
+                                  title="Ouvir prévia sonora sintetizada"
+                                >
+                                  {isPlayingThis ? <Square className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
+                                  {isPlayingThis ? 'Parar' : 'Ouvir'}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+
+                  {/* Summary selection banner */}
+                  <div className="p-3 bg-[#10141b] rounded-lg border border-[#242c3b]">
+                    {useOnlySelectedMidis && selectedFileNames.length === 0 ? (
+                      <div className="text-amber-400 font-semibold flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        Atenção: Nenhuma música marcada! Selecione os MIDIs acima para treinar especificamente.
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-[#00e676]" />
+                          <span className="font-semibold text-[#f0f4f8]">
+                            {useOnlySelectedMidis
+                              ? `Treinando exclusivamente com ${selectedFileNames.length} MIDIs marcados`
+                              : `Treinando com todos os ${libraryFiles.length} MIDIs da biblioteca`}
+                          </span>
+                        </div>
+                        <span className="font-mono text-[#00e5ff] text-[11px] font-bold">
+                          {libraryFiles
+                            .filter((f) => !useOnlySelectedMidis || selectedFileNames.includes(f.filename))
+                            .reduce((sum, f) => sum + (f.note_count || 0), 0)}{' '}
+                          notas no total
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

@@ -293,12 +293,40 @@
                 <h3>Configuração do Modelo & Hiperparâmetros</h3>
               </div>
               <div class="panel-body">
-                <div class="form-group">
-                  <label>Preset de Desempenho</label>
+                <div class="form-group mb-3">
+                  <label>Presets de Treinamento & Intensidade</label>
                   <div class="preset-buttons">
-                    <button class="btn btn-sm btn-outline active" data-preset="cpu">Conservador (CPU Fraco)</button>
-                    <button class="btn btn-sm btn-outline" data-preset="balanced">Equilibrado</button>
-                    <button class="btn btn-sm btn-outline" data-preset="deep">Deep Music (Mais Camadas)</button>
+                    <button class="btn btn-sm btn-outline" data-preset="fast">⚡ Leve / Rápido (5 Épocas)</button>
+                    <button class="btn btn-sm btn-outline active" data-preset="balanced">⚖️ Equilibrado (15 Épocas)</button>
+                    <button class="btn btn-sm btn-outline" data-preset="deep">🧠 Treino Profundo (35 Épocas)</button>
+                    <button class="btn btn-sm btn-outline btn-max-power" data-preset="max_power">🔥 POTÊNCIA MÁXIMA (75 Épocas)</button>
+                  </div>
+                </div>
+
+                <div class="form-group mb-4">
+                  <div class="d-flex justify-between">
+                    <label for="train-intensity-slider">Slider de Intensidade Dinâmica: <span id="intensity-val" class="text-cyan">50%</span></label>
+                  </div>
+                  <input type="range" id="train-intensity-slider" class="form-range" min="5" max="100" value="50">
+                </div>
+
+                <!-- Specific MIDIs Selection Box -->
+                <div class="form-group mb-4">
+                  <div class="panel-sub-header">
+                    <label>🎯 Seleção de MIDIs para Este Treinamento</label>
+                    <div class="d-flex gap-2">
+                      <button class="btn btn-xs btn-outline" id="btn-select-all-midis">Marcar Todos</button>
+                      <button class="btn btn-xs btn-outline" id="btn-deselect-all-midis">Desmarcar Todos</button>
+                    </div>
+                  </div>
+                  <div class="form-check-group mb-2">
+                    <label class="checkbox-label">
+                      <input type="checkbox" id="check-use-only-selected">
+                      <span>Treinar estritamente apenas usando os MIDIs marcados abaixo</span>
+                    </label>
+                  </div>
+                  <div class="midi-selection-scroll" id="midi-selection-list">
+                    <!-- Populated dynamically via JS -->
                   </div>
                 </div>
 
@@ -309,7 +337,7 @@
                   </div>
                   <div class="form-group">
                     <label for="train-epochs">Número de Épocas</label>
-                    <input type="number" id="train-epochs" class="form-control" value="12" min="1" max="200">
+                    <input type="number" id="train-epochs" class="form-control" value="15" min="1" max="200">
                   </div>
                   <div class="form-group">
                     <label for="train-batch">Tamanho do Lote (Batch Size)</label>
@@ -321,7 +349,7 @@
                   </div>
                   <div class="form-group">
                     <label for="train-layers">Camadas Transformer (Layers)</label>
-                    <input type="number" id="train-layers" class="form-control" value="3" min="1" max="12">
+                    <input type="number" id="train-layers" class="form-control" value="4" min="1" max="12">
                   </div>
                   <div class="form-group">
                     <label for="train-heads">Cabeças de Atenção (Heads)</label>
@@ -350,8 +378,8 @@
               <div class="panel-body">
                 <div class="train-meters-grid">
                   <div class="meter-box">
-                    <span class="meter-title">Época</span>
-                    <span class="meter-val" id="meter-epoch">0 / 0</span>
+                    <span class="meter-title">Época Atual</span>
+                    <span class="meter-val text-cyan" id="meter-epoch">0 / 0</span>
                   </div>
                   <div class="meter-box">
                     <span class="meter-title">Passo (Step)</span>
@@ -359,11 +387,11 @@
                   </div>
                   <div class="meter-box">
                     <span class="meter-title">Loss Treino</span>
-                    <span class="meter-val text-cyan" id="meter-loss">0.000</span>
+                    <span class="meter-val text-cyan" id="meter-loss">0.0000</span>
                   </div>
                   <div class="meter-box">
                     <span class="meter-title">Loss Validação</span>
-                    <span class="meter-val text-amber" id="meter-val-loss">0.000</span>
+                    <span class="meter-val text-amber" id="meter-val-loss">0.0000</span>
                   </div>
                   <div class="meter-box">
                     <span class="meter-title">Tempo Decorrido</span>
@@ -371,13 +399,24 @@
                   </div>
                   <div class="meter-box">
                     <span class="meter-title">Tempo Restante (ETA)</span>
-                    <span class="meter-val" id="meter-eta">--:--</span>
+                    <span class="meter-val text-amber" id="meter-eta">--:--</span>
                   </div>
                 </div>
 
+                <!-- Dual Progress Bars -->
                 <div class="progress-bar-container mt-4">
                   <div class="progress-info">
-                    <span>Progresso Geral</span>
+                    <span>Passo da Época Atual: <strong id="step-in-epoch-text" class="text-cyan">0 / 0</strong></span>
+                    <span id="train-epoch-pct">0%</span>
+                  </div>
+                  <div class="progress-track">
+                    <div class="progress-fill" id="train-epoch-fill" style="width: 0%; background: #00e5ff;"></div>
+                  </div>
+                </div>
+
+                <div class="progress-bar-container mt-2">
+                  <div class="progress-info">
+                    <span>Progresso Geral do Treinamento</span>
                     <span id="train-pct">0%</span>
                   </div>
                   <div class="progress-track">
@@ -387,7 +426,18 @@
 
                 <!-- Live Loss Canvas Chart -->
                 <div class="chart-container mt-4">
-                  <canvas id="loss-chart-canvas" width="600" height="200"></canvas>
+                  <canvas id="loss-chart-canvas" width="600" height="170"></canvas>
+                </div>
+
+                <!-- Terminal Stream Console -->
+                <div class="terminal-box mt-3">
+                  <div class="terminal-header">
+                    <span>Console Stream em Tempo Real</span>
+                    <button class="btn btn-xs btn-outline" id="btn-copy-terminal">Copiar Logs</button>
+                  </div>
+                  <div class="terminal-content" id="terminal-stream">
+                    <span class="text-dim">Aguardando início do treinamento...</span>
+                  </div>
                 </div>
               </div>
             </div>
